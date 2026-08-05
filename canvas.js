@@ -1,4 +1,4 @@
-// ===== CANVAS - Hold-to-Shape + All Features =====
+// ===== CANVAS - FIXED PEN STYLES + All Features =====
 const Canvas = (() => {
   let drawingCanvas, bgCanvas, ctx, bgCtx;
   let isDrawing = false;
@@ -20,23 +20,20 @@ const Canvas = (() => {
   let menuOpen = false;
   let dpr = 1;
   
-  // Live scribble
   let liveDirectionChanges = 0;
   let liveLastDx = 0, liveLastDy = 0;
   let liveScribbleTriggered = false;
   
-  // Multi-touch gestures
   let activeTouches = new Map();
   let gestureStartTime = 0;
   let lastGestureTime = 0;
   
-  // HOLD-TO-SHAPE detection
   let holdTimer = null;
   let holdStartTime = 0;
   let holdPosition = null;
   let holdTriggered = false;
-  const HOLD_DURATION = 600; // ms to trigger shape snap
-  const HOLD_MOVEMENT_THRESHOLD = 8; // pixels - must stay still
+  const HOLD_DURATION = 600;
+  const HOLD_MOVEMENT_THRESHOLD = 8;
 
   function init() {
     drawingCanvas = document.getElementById('drawingCanvas');
@@ -95,20 +92,13 @@ const Canvas = (() => {
     redrawStrokes();
   }
 
-  // ========== MULTI-TOUCH GESTURES ==========
+  // ========== GESTURES ==========
   function handleTouchStart(e) {
     if (!gesturesEnabled) return;
     Array.from(e.touches).forEach(touch => {
-      activeTouches.set(touch.identifier, {
-        startX: touch.clientX,
-        startY: touch.clientY,
-        startTime: Date.now()
-      });
+      activeTouches.set(touch.identifier, { startX: touch.clientX, startY: touch.clientY, startTime: Date.now() });
     });
-    if (e.touches.length >= 2) {
-      gestureStartTime = Date.now();
-      e.preventDefault();
-    }
+    if (e.touches.length >= 2) { gestureStartTime = Date.now(); e.preventDefault(); }
   }
 
   function handleTouchEnd(e) {
@@ -130,21 +120,13 @@ const Canvas = (() => {
         e.preventDefault();
       }
     }
-    Array.from(e.changedTouches).forEach(touch => {
-      activeTouches.delete(touch.identifier);
-    });
+    Array.from(e.changedTouches).forEach(touch => activeTouches.delete(touch.identifier));
   }
 
   function performUndo() {
-    if (isDrawing) {
-      isDrawing = false;
-      currentStroke = null;
-      clearHoldTimer();
-      redrawStrokes();
-    }
+    if (isDrawing) { isDrawing = false; currentStroke = null; clearHoldTimer(); redrawStrokes(); }
     undo();
   }
-
   function performRedo() { redo(); }
 
   function showGestureHint(text) {
@@ -171,18 +153,13 @@ const Canvas = (() => {
     panel.classList.remove('hidden');
     menuOpen = true;
   }
-
   function closePenSettings() {
     const panel = document.getElementById('penSettings');
     if (!panel) return;
     panel.classList.add('hidden');
     menuOpen = false;
   }
-
-  function togglePenSettings() {
-    if (menuOpen) closePenSettings();
-    else openPenSettings();
-  }
+  function togglePenSettings() { if (menuOpen) closePenSettings(); else openPenSettings(); }
 
   function setupToolbar() {
     document.querySelectorAll('.pen-preset').forEach(btn => {
@@ -209,12 +186,8 @@ const Canvas = (() => {
         document.querySelectorAll('.pen-tool').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentTool = tool;
-        if (tool === 'highlighter') {
-          penColor = '#ffff00';
-          openPenSettings();
-        } else {
-          closePenSettings();
-        }
+        if (tool === 'highlighter') { penColor = '#ffff00'; openPenSettings(); }
+        else closePenSettings();
         updateCursor();
       });
     });
@@ -249,9 +222,7 @@ const Canvas = (() => {
         e.stopPropagation();
         shapeRecognitionEnabled = !shapeRecognitionEnabled;
         autoShape.classList.toggle('active', shapeRecognitionEnabled);
-        if (typeof UI !== 'undefined') {
-          UI.showToast(shapeRecognitionEnabled ? '✨ Auto Shape ON' : 'Auto Shape OFF');
-        }
+        if (typeof UI !== 'undefined') UI.showToast(shapeRecognitionEnabled ? '✨ Auto Shape ON' : 'Auto Shape OFF');
         const toggle = document.getElementById('shapeRecognitionToggle');
         if (toggle) toggle.checked = shapeRecognitionEnabled;
       });
@@ -343,14 +314,8 @@ const Canvas = (() => {
       });
     }
 
-    document.getElementById('undoBtn')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      undo();
-    });
-    document.getElementById('redoBtn')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      redo();
-    });
+    document.getElementById('undoBtn')?.addEventListener('click', (e) => { e.stopPropagation(); undo(); });
+    document.getElementById('redoBtn')?.addEventListener('click', (e) => { e.stopPropagation(); redo(); });
 
     const penSettings = document.getElementById('penSettings');
     if (penSettings) {
@@ -369,11 +334,7 @@ const Canvas = (() => {
 
   function getPos(e) {
     const rect = drawingCanvas.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-      pressure: e.pressure || 0.5
-    };
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top, pressure: e.pressure || 0.5 };
   }
 
   function shouldAcceptInput(e) {
@@ -383,12 +344,9 @@ const Canvas = (() => {
     return true;
   }
 
-  // ========== HOLD-TO-SHAPE ==========
+  // ========== HOLD TO SHAPE ==========
   function clearHoldTimer() {
-    if (holdTimer) {
-      clearTimeout(holdTimer);
-      holdTimer = null;
-    }
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
     hideHoldIndicator();
   }
 
@@ -397,28 +355,23 @@ const Canvas = (() => {
     holdStartTime = Date.now();
     holdPosition = { x: pos.x, y: pos.y };
     holdTriggered = false;
-    
     holdTimer = setTimeout(() => {
       if (isDrawing && currentStroke && currentTool === 'pen' && currentStroke.points.length > 8) {
-        // Try to detect shape
         const shape = detectShape(currentStroke.points);
         if (shape) {
           holdTriggered = true;
           currentStroke.points = generateShapePoints(shape, currentStroke.points);
           currentStroke.recognizedShape = shape.type;
-          
-          // Push stroke immediately
+          // Force solid style for shapes
+          currentStroke.style = 'solid';
           strokes.push(currentStroke);
           redoStack = [];
           currentStroke = null;
           isDrawing = false;
           lastPoint = null;
-          
           redrawStrokes();
           showShapeSnapEffect(shape);
           if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type} snapped!`);
-          
-          // Haptic feedback
           if (navigator.vibrate) navigator.vibrate(30);
         } else {
           if (typeof UI !== 'undefined') UI.showToast('🤔 No shape detected');
@@ -426,7 +379,6 @@ const Canvas = (() => {
       }
       hideHoldIndicator();
     }, HOLD_DURATION);
-    
     showHoldIndicator(pos);
   }
 
@@ -435,31 +387,12 @@ const Canvas = (() => {
     if (!indicator) {
       indicator = document.createElement('div');
       indicator.id = 'holdIndicator';
-      indicator.style.cssText = `
-        position: absolute;
-        width: 40px;
-        height: 40px;
-        border: 3px solid var(--accent);
-        border-radius: 50%;
-        pointer-events: none;
-        z-index: 100;
-        transform: translate(-50%, -50%) scale(0);
-        transition: transform ${HOLD_DURATION}ms ease-out;
-        border-top-color: transparent;
-        animation: spin ${HOLD_DURATION}ms linear;
-      `;
+      indicator.style.cssText = `position:absolute;width:40px;height:40px;border:3px solid var(--accent);border-radius:50%;pointer-events:none;z-index:100;border-top-color:transparent;`;
       document.getElementById('canvasWrap')?.appendChild(indicator);
-      
-      // Add spin animation
       if (!document.getElementById('holdIndicatorStyle')) {
         const style = document.createElement('style');
         style.id = 'holdIndicatorStyle';
-        style.textContent = `
-          @keyframes spin {
-            0% { transform: translate(-50%, -50%) scale(0.5) rotate(0deg); opacity: 0.5; }
-            100% { transform: translate(-50%, -50%) scale(1.5) rotate(720deg); opacity: 1; }
-          }
-        `;
+        style.textContent = `@keyframes spin{0%{transform:translate(-50%,-50%) scale(0.5) rotate(0deg);opacity:0.5}100%{transform:translate(-50%,-50%) scale(1.5) rotate(720deg);opacity:1}}`;
         document.head.appendChild(style);
       }
     }
@@ -467,7 +400,6 @@ const Canvas = (() => {
     indicator.style.top = pos.y + 'px';
     indicator.style.display = 'block';
     indicator.style.animation = 'none';
-    // Force reflow
     void indicator.offsetWidth;
     indicator.style.animation = `spin ${HOLD_DURATION}ms linear`;
   }
@@ -481,48 +413,26 @@ const Canvas = (() => {
     const wrap = document.getElementById('canvasWrap');
     if (!wrap) return;
     const flash = document.createElement('div');
-    flash.style.cssText = `
-      position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      padding: 12px 24px;
-      background: rgba(255,149,0,0.9);
-      color: white;
-      font-size: 20px;
-      font-weight: 700;
-      border-radius: 20px;
-      z-index: 200;
-      pointer-events: none;
-      animation: shapeFlash 0.8s ease-out forwards;
-    `;
+    flash.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:12px 24px;background:rgba(255,149,0,0.9);color:white;font-size:20px;font-weight:700;border-radius:20px;z-index:200;pointer-events:none;animation:shapeFlash 0.8s ease-out forwards;`;
     flash.textContent = `✨ ${shape.type}`;
     wrap.appendChild(flash);
-    
     if (!document.getElementById('shapeFlashStyle')) {
       const style = document.createElement('style');
       style.id = 'shapeFlashStyle';
-      style.textContent = `
-        @keyframes shapeFlash {
-          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
-          40% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
-          100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
-        }
-      `;
+      style.textContent = `@keyframes shapeFlash{0%{transform:translate(-50%,-50%) scale(0.5);opacity:0}40%{transform:translate(-50%,-50%) scale(1.2);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:0}}`;
       document.head.appendChild(style);
     }
-    
     setTimeout(() => flash.remove(), 800);
   }
 
+  // ========== DRAWING ==========
   function onPointerDown(e) {
     if (currentTool === 'select' || currentTool === 'lasso') return;
     if (!shouldAcceptInput(e)) return;
     if (e.pointerType === 'touch' && activeTouches.size > 1) return;
-    
     e.preventDefault();
     e.stopPropagation();
     if (menuOpen) closePenSettings();
-    
     try { drawingCanvas.setPointerCapture(e.pointerId); } catch (err) {}
     
     isDrawing = true;
@@ -539,28 +449,15 @@ const Canvas = (() => {
       color: penColor,
       size: penSize,
       opacity: penOpacity,
-      style: penStyle,
+      style: currentTool === 'pen' ? penStyle : 'solid',
       points: [pos]
     };
-
-    if (currentTool !== 'eraser') {
-      drawStrokeStart(pos);
-    }
-  }
-
-  function drawStrokeStart(pos) {
-    ctx.globalAlpha = currentTool === 'highlighter' ? 0.3 : penOpacity;
-    ctx.fillStyle = penColor;
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, penSize / 2, 0, Math.PI * 2);
-    ctx.fill();
   }
 
   function onPointerMove(e) {
     if (!isDrawing) return;
     if (!shouldAcceptInput(e)) return;
     if (activeTouches.size > 1) return;
-    
     e.preventDefault();
     e.stopPropagation();
 
@@ -568,26 +465,18 @@ const Canvas = (() => {
     if (!currentStroke) return;
     currentStroke.points.push(pos);
 
-    // ===== HOLD-TO-SHAPE detection =====
-    // Only for pen tool (not highlighter/eraser)
-    if (currentTool === 'pen' && currentStroke.points.length > 8) {
+    // Hold to shape (only for solid pen)
+    if (currentTool === 'pen' && penStyle === 'solid' && currentStroke.points.length > 8) {
       if (holdPosition) {
-        // Check if pen has moved significantly
         const dx = pos.x - holdPosition.x;
         const dy = pos.y - holdPosition.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distance > HOLD_MOVEMENT_THRESHOLD) {
-          // Reset hold timer since pen moved
-          startHoldTimer(pos);
-        }
+        if (Math.sqrt(dx * dx + dy * dy) > HOLD_MOVEMENT_THRESHOLD) startHoldTimer(pos);
       } else {
-        // First time - start hold timer
         startHoldTimer(pos);
       }
     }
 
-    // Fast scribble detection
+    // Fast scribble erase
     if (scribbleEraseEnabled && !liveScribbleTriggered && 
         currentTool !== 'eraser' && currentTool !== 'highlighter' &&
         currentStroke.points.length > 12) {
@@ -612,88 +501,16 @@ const Canvas = (() => {
     if (currentTool === 'eraser') {
       eraseAt(pos.x, pos.y, penSize * 3);
     } else {
-      drawSegment(lastPoint, pos);
+      // Redraw in real-time so styles look correct
+      redrawStrokes();
+      renderStroke(currentStroke);
     }
     lastPoint = pos;
-  }
-
-  function drawSegment(p1, p2) {
-    const dynamicSize = currentTool === 'pen'
-      ? penSize * (0.5 + p2.pressure * 0.8)
-      : penSize;
-    
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = currentTool === 'highlighter' ? 0.3 : penOpacity;
-    ctx.strokeStyle = penColor;
-    ctx.lineWidth = dynamicSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    if (penStyle === 'dashed') ctx.setLineDash([dynamicSize * 2, dynamicSize * 1.5]);
-    else if (penStyle === 'dotted') ctx.setLineDash([1, dynamicSize * 1.5]);
-    else ctx.setLineDash([]);
-
-    if (penStyle === 'double') {
-      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      const offset = dynamicSize;
-      const dx = Math.cos(angle + Math.PI / 2) * offset;
-      const dy = Math.sin(angle + Math.PI / 2) * offset;
-      ctx.lineWidth = dynamicSize / 3;
-      ctx.beginPath();
-      ctx.moveTo(p1.x + dx, p1.y + dy);
-      ctx.lineTo(p2.x + dx, p2.y + dy);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(p1.x - dx, p1.y - dy);
-      ctx.lineTo(p2.x - dx, p2.y - dy);
-      ctx.stroke();
-    } else if (penStyle === 'curly') {
-      const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      const amplitude = dynamicSize * 1.5;
-      const wavelength = dynamicSize * 3;
-      const numWaves = Math.max(1, Math.floor(dist / wavelength));
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      for (let i = 1; i <= numWaves * 4; i++) {
-        const t = i / (numWaves * 4);
-        const x = p1.x + (p2.x - p1.x) * t;
-        const y = p1.y + (p2.y - p1.y) * t;
-        const waveOffset = Math.sin(t * numWaves * Math.PI * 2) * amplitude;
-        ctx.lineTo(x + Math.cos(angle + Math.PI / 2) * waveOffset, y + Math.sin(angle + Math.PI / 2) * waveOffset);
-      }
-      ctx.stroke();
-    } else if (penStyle === 'zigzag') {
-      const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      const amplitude = dynamicSize * 1.5;
-      const wavelength = dynamicSize * 2;
-      const numZigs = Math.max(1, Math.floor(dist / wavelength));
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      for (let i = 1; i <= numZigs * 2; i++) {
-        const t = i / (numZigs * 2);
-        const x = p1.x + (p2.x - p1.x) * t;
-        const y = p1.y + (p2.y - p1.y) * t;
-        const zigOffset = (i % 2 === 0 ? 1 : -1) * amplitude;
-        ctx.lineTo(x + Math.cos(angle + Math.PI / 2) * zigOffset, y + Math.sin(angle + Math.PI / 2) * zigOffset);
-      }
-      ctx.stroke();
-    } else {
-      const mx = (p1.x + p2.x) / 2;
-      const my = (p1.y + p2.y) / 2;
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.quadraticCurveTo(p1.x, p1.y, mx, my);
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
   }
 
   function onPointerUp(e) {
     clearHoldTimer();
     holdPosition = null;
-    
     if (!isDrawing) return;
     isDrawing = false;
     lastPoint = null;
@@ -703,17 +520,16 @@ const Canvas = (() => {
     try { if (e && e.pointerId) drawingCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
 
     if (currentStroke && currentStroke.points.length > 0) {
-      // Auto shape recognition (only if toggle is ON and hold didn't trigger)
       if (!holdTriggered && shapeRecognitionEnabled && currentTool === 'pen' && currentStroke.points.length > 8) {
         const shape = detectShape(currentStroke.points);
         if (shape) {
           currentStroke.points = generateShapePoints(shape, currentStroke.points);
           currentStroke.recognizedShape = shape.type;
+          currentStroke.style = 'solid';
           if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type}`);
         }
       }
-      // Beautify
-      if (beautifyEnabled && currentTool !== 'eraser' && !currentStroke.recognizedShape) {
+      if (beautifyEnabled && currentTool !== 'eraser' && !currentStroke.recognizedShape && currentStroke.style === 'solid') {
         currentStroke = beautifyStroke(currentStroke);
       }
       strokes.push(currentStroke);
@@ -724,6 +540,289 @@ const Canvas = (() => {
     holdTriggered = false;
   }
 
+  // ========== STROKE RENDERING (FIXED PEN STYLES) ==========
+  function renderStroke(stroke) {
+    if (!stroke.points || stroke.points.length < 1) return;
+    
+    const isHighlighter = stroke.tool === 'highlighter';
+    const opacity = isHighlighter ? 0.3 : (stroke.opacity || 1);
+    const style = stroke.style || 'solid';
+    const size = stroke.size;
+    const color = stroke.color;
+    
+    ctx.globalAlpha = opacity;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = size;
+    ctx.setLineDash([]);
+    
+    // Single point = dot
+    if (stroke.points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(stroke.points[0].x, stroke.points[0].y, size / 2, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    
+    // Render based on style
+    switch (style) {
+      case 'solid':
+        renderSolidStroke(stroke);
+        break;
+      case 'dashed':
+        renderDashedStroke(stroke);
+        break;
+      case 'dotted':
+        renderDottedStroke(stroke);
+        break;
+      case 'double':
+        renderDoubleStroke(stroke);
+        break;
+      case 'curly':
+        renderWavyStroke(stroke);
+        break;
+      case 'zigzag':
+        renderZigzagStroke(stroke);
+        break;
+      default:
+        renderSolidStroke(stroke);
+    }
+    
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+  }
+
+  function renderSolidStroke(stroke) {
+    const points = stroke.points;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length - 1; i++) {
+      const mx = (points[i].x + points[i + 1].x) / 2;
+      const my = (points[i].y + points[i + 1].y) / 2;
+      ctx.quadraticCurveTo(points[i].x, points[i].y, mx, my);
+    }
+    if (points.length > 1) {
+      const last = points[points.length - 1];
+      ctx.lineTo(last.x, last.y);
+    }
+    ctx.stroke();
+  }
+
+  function renderDashedStroke(stroke) {
+    const points = stroke.points;
+    const size = stroke.size;
+    ctx.setLineDash([size * 2.5, size * 2]);
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length - 1; i++) {
+      const mx = (points[i].x + points[i + 1].x) / 2;
+      const my = (points[i].y + points[i + 1].y) / 2;
+      ctx.quadraticCurveTo(points[i].x, points[i].y, mx, my);
+    }
+    if (points.length > 1) {
+      const last = points[points.length - 1];
+      ctx.lineTo(last.x, last.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function renderDottedStroke(stroke) {
+    const points = stroke.points;
+    const size = stroke.size;
+    const spacing = size * 2;
+    
+    // Draw circles along the path
+    let accumulatedDist = 0;
+    let lastDotPoint = { x: points[0].x, y: points[0].y };
+    
+    // Draw first dot
+    ctx.beginPath();
+    ctx.arc(points[0].x, points[0].y, size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    for (let i = 1; i < points.length; i++) {
+      const dx = points[i].x - lastDotPoint.x;
+      const dy = points[i].y - lastDotPoint.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist >= spacing) {
+        ctx.beginPath();
+        ctx.arc(points[i].x, points[i].y, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        lastDotPoint = { x: points[i].x, y: points[i].y };
+      }
+    }
+  }
+
+  function renderDoubleStroke(stroke) {
+    const points = stroke.points;
+    const size = stroke.size;
+    const offset = size * 0.8;
+    const thinLine = Math.max(1, size / 3);
+    
+    ctx.lineWidth = thinLine;
+    
+    // Get smoothed points
+    const smoothPts = [];
+    smoothPts.push(points[0]);
+    for (let i = 1; i < points.length - 1; i++) {
+      smoothPts.push({
+        x: (points[i].x + points[i + 1].x) / 2,
+        y: (points[i].y + points[i + 1].y) / 2
+      });
+    }
+    smoothPts.push(points[points.length - 1]);
+    
+    // Draw both parallel lines
+    const upperPath = [];
+    const lowerPath = [];
+    
+    for (let i = 0; i < smoothPts.length; i++) {
+      const p = smoothPts[i];
+      let angle;
+      if (i === 0) {
+        angle = Math.atan2(smoothPts[1].y - p.y, smoothPts[1].x - p.x);
+      } else if (i === smoothPts.length - 1) {
+        angle = Math.atan2(p.y - smoothPts[i-1].y, p.x - smoothPts[i-1].x);
+      } else {
+        angle = Math.atan2(smoothPts[i+1].y - smoothPts[i-1].y, smoothPts[i+1].x - smoothPts[i-1].x);
+      }
+      
+      const perpX = Math.cos(angle + Math.PI / 2) * offset;
+      const perpY = Math.sin(angle + Math.PI / 2) * offset;
+      
+      upperPath.push({ x: p.x + perpX, y: p.y + perpY });
+      lowerPath.push({ x: p.x - perpX, y: p.y - perpY });
+    }
+    
+    // Draw upper line
+    ctx.beginPath();
+    ctx.moveTo(upperPath[0].x, upperPath[0].y);
+    for (let i = 1; i < upperPath.length; i++) {
+      ctx.lineTo(upperPath[i].x, upperPath[i].y);
+    }
+    ctx.stroke();
+    
+    // Draw lower line
+    ctx.beginPath();
+    ctx.moveTo(lowerPath[0].x, lowerPath[0].y);
+    for (let i = 1; i < lowerPath.length; i++) {
+      ctx.lineTo(lowerPath[i].x, lowerPath[i].y);
+    }
+    ctx.stroke();
+  }
+
+  function renderWavyStroke(stroke) {
+    const points = stroke.points;
+    const size = stroke.size;
+    const amplitude = size * 1.5;
+    const frequency = size * 3; // wavelength
+    
+    // Calculate cumulative distance along path
+    const path = [];
+    let cumDist = 0;
+    path.push({ ...points[0], dist: 0 });
+    
+    for (let i = 1; i < points.length; i++) {
+      const dx = points[i].x - points[i-1].x;
+      const dy = points[i].y - points[i-1].y;
+      cumDist += Math.sqrt(dx * dx + dy * dy);
+      path.push({ ...points[i], dist: cumDist });
+    }
+    
+    if (cumDist < 5) return;
+    
+    // Generate wavy path
+    const numSteps = Math.max(20, Math.floor(cumDist / 2));
+    ctx.beginPath();
+    
+    let firstPoint = true;
+    for (let step = 0; step <= numSteps; step++) {
+      const targetDist = (step / numSteps) * cumDist;
+      
+      // Find the segment containing this distance
+      let segIdx = 0;
+      for (let i = 1; i < path.length; i++) {
+        if (path[i].dist >= targetDist) { segIdx = i; break; }
+      }
+      
+      const p1 = path[segIdx - 1] || path[0];
+      const p2 = path[segIdx];
+      const segLen = p2.dist - p1.dist;
+      const t = segLen > 0 ? (targetDist - p1.dist) / segLen : 0;
+      
+      const x = p1.x + (p2.x - p1.x) * t;
+      const y = p1.y + (p2.y - p1.y) * t;
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      
+      const waveOffset = Math.sin((targetDist / frequency) * Math.PI * 2) * amplitude;
+      const px = x + Math.cos(angle + Math.PI / 2) * waveOffset;
+      const py = y + Math.sin(angle + Math.PI / 2) * waveOffset;
+      
+      if (firstPoint) { ctx.moveTo(px, py); firstPoint = false; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  function renderZigzagStroke(stroke) {
+    const points = stroke.points;
+    const size = stroke.size;
+    const amplitude = size * 1.5;
+    const frequency = size * 1.5;
+    
+    // Calculate cumulative distance along path
+    const path = [];
+    let cumDist = 0;
+    path.push({ ...points[0], dist: 0 });
+    
+    for (let i = 1; i < points.length; i++) {
+      const dx = points[i].x - points[i-1].x;
+      const dy = points[i].y - points[i-1].y;
+      cumDist += Math.sqrt(dx * dx + dy * dy);
+      path.push({ ...points[i], dist: cumDist });
+    }
+    
+    if (cumDist < 5) return;
+    
+    // Generate zigzag path
+    const numZigs = Math.max(4, Math.floor(cumDist / frequency));
+    const numSteps = numZigs * 2;
+    ctx.beginPath();
+    
+    let firstPoint = true;
+    for (let step = 0; step <= numSteps; step++) {
+      const targetDist = (step / numSteps) * cumDist;
+      
+      let segIdx = 0;
+      for (let i = 1; i < path.length; i++) {
+        if (path[i].dist >= targetDist) { segIdx = i; break; }
+      }
+      
+      const p1 = path[segIdx - 1] || path[0];
+      const p2 = path[segIdx];
+      const segLen = p2.dist - p1.dist;
+      const t = segLen > 0 ? (targetDist - p1.dist) / segLen : 0;
+      
+      const x = p1.x + (p2.x - p1.x) * t;
+      const y = p1.y + (p2.y - p1.y) * t;
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      
+      const zigOffset = (step % 2 === 0 ? 1 : -1) * amplitude;
+      const px = x + Math.cos(angle + Math.PI / 2) * zigOffset;
+      const py = y + Math.sin(angle + Math.PI / 2) * zigOffset;
+      
+      if (firstPoint) { ctx.moveTo(px, py); firstPoint = false; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  // ========== SCRIBBLE DETECTION ==========
   function isLiveScribble(points) {
     if (points.length < 12) return false;
     const recentPoints = points.slice(-Math.min(20, points.length));
@@ -761,6 +860,7 @@ const Canvas = (() => {
       p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY));
   }
 
+  // ========== BEAUTIFY ==========
   function beautifyStroke(stroke) {
     if (!stroke.points || stroke.points.length < 3) return stroke;
     const simplified = simplifyPoints(stroke.points, 1.5);
@@ -815,6 +915,7 @@ const Canvas = (() => {
     return smoothed;
   }
 
+  // ========== SHAPE DETECTION ==========
   function detectShape(points) {
     if (points.length < 8) return null;
     const xs = points.map(p => p.x);
@@ -936,12 +1037,8 @@ const Canvas = (() => {
   }
 
   function eraseAt(x, y, radius) {
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalCompositeOperation = 'source-over';
     strokes = strokes.filter(stroke => !stroke.points.some(p => Math.sqrt(Math.pow(p.x - x, 2) + Math.pow(p.y - y, 2)) < radius));
+    redrawStrokes();
   }
 
   function undo() {
@@ -970,28 +1067,7 @@ const Canvas = (() => {
     const w = drawingCanvas.width / dpr;
     const h = drawingCanvas.height / dpr;
     ctx.clearRect(0, 0, w, h);
-    strokes.forEach(stroke => {
-      if (stroke.points.length < 1) return;
-      const savedTool = currentTool, savedColor = penColor, savedSize = penSize;
-      const savedOpacity = penOpacity, savedStyle = penStyle;
-      currentTool = stroke.tool;
-      penColor = stroke.color;
-      penSize = stroke.size;
-      penOpacity = stroke.opacity || 1;
-      penStyle = stroke.style || 'solid';
-      if (stroke.points.length === 1) {
-        drawStrokeStart(stroke.points[0]);
-      } else {
-        for (let i = 1; i < stroke.points.length; i++) drawSegment(stroke.points[i-1], stroke.points[i]);
-      }
-      currentTool = savedTool;
-      penColor = savedColor;
-      penSize = savedSize;
-      penOpacity = savedOpacity;
-      penStyle = savedStyle;
-    });
-    ctx.globalAlpha = 1;
-    ctx.setLineDash([]);
+    strokes.forEach(stroke => renderStroke(stroke));
   }
 
   function drawBackground() {
