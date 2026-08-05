@@ -1,1118 +1,187 @@
-// ===== NoteMax Canvas - Apple Notes Style Writing =====
+// ===== NoteMax Canvas - Ultimate Writing Experience =====
 const Canvas = (() => {
-  // Core state
   let drawingCanvas, bgCanvas, ctx, bgCtx;
-  let dpr = 1;
-  let canvasWidth = 0;
-  let canvasHeight = 0;
-
-  // Drawing state
   let isDrawing = false;
   let currentTool = 'pen';
   let penColor = '#ffffff';
   let penSize = 3;
   let penOpacity = 1;
   let penStyle = 'solid';
-
-  // Stroke storage
   let strokes = [];
   let redoStack = [];
-  let currentPoints = [];
-  let currentPressures = [];
-
-  // Background
+  let currentStroke = null;
   let bgType = 'dark';
-
-  // Settings
+  let lastPoint = null;
+  let scribbleEraseEnabled = true;
+  let shapeRecognitionEnabled = false;
   let fingerDrawEnabled = false;
   let beautifyEnabled = false;
-  let shapeRecognitionEnabled = false;
-  let scribbleEraseEnabled = true;
   let gesturesEnabled = true;
   let menuOpen = false;
+  let dpr = 1;
 
-  // Gesture tracking
-  let activeTouchCount = 0;
+  // Multi-touch
+  let activeTouches = new Map();
   let gestureStartTime = 0;
   let lastGestureTime = 0;
 
-  // Animation frame for smooth rendering
-  let needsRender = false;
-  let rafId = null;
+  // Hold-to-erase
+  let scribbleHoldTimer = null;
+  let scribbleDetected = false;
+  let scribbleHoldPos = null;
+  const SCRIBBLE_HOLD_DURATION = 400;
 
-  // ==========================================
-  // INIT
-  // ==========================================
+  // Hold-to-shape
+  let shapeHoldTimer = null;
+  let shapeHoldPosition = null;
+  let shapeHoldTriggered = false;
+  const SHAPE_HOLD_DURATION = 700;
+  const SHAPE_HOLD_MOVEMENT_THRESHOLD = 12;
+
+  // ========== INIT ==========
   function init() {
     drawingCanvas = document.getElementById('drawingCanvas');
     bgCanvas = document.getElementById('bgCanvas');
     if (!drawingCanvas || !bgCanvas) return;
 
-    ctx = drawingCanvas.getContext('2d');
+    ctx = drawingCanvas.getContext('2d', { desynchronized: true, alpha: true });
     bgCtx = bgCanvas.getContext('2d');
     dpr = window.devicePixelRatio || 1;
+    currentTool = 'pen';
 
-    resize();
-    window.addEventListener('resize', resize);
-    window.addEventListener('orientationchange', () => setTimeout(resize, 300));
+    resizeCanvases();
+    window.addEventListener('resize', debounce(resizeCanvases, 100));
+    window.addEventListener('orientationchange', () => setTimeout(resizeCanvases, 400));
 
-    // Pointer events for drawing
-    drawingCanvas.addEventListener('pointerdown', pointerDown, { passive: false });
-    drawingCanvas.addEventListener('pointermove', pointerMove, { passive: false });
-    drawingCanvas.addEventListener('pointerup', pointerUp, { passive: false });
-    drawingCanvas.addEventListener('pointercancel', pointerUp, { passive: false });
-    drawingCanvas.addEventListener('pointerleave', pointerUp, { passive: false });
+    drawingCanvas.addEventListener('pointerdown', onPointerDown, { passive: false });
+    drawingCanvas.addEventListener('pointermove', onPointerMove, { passive: false });
+    drawingCanvas.addEventListener('pointerup', onPointerUp, { passive: false });
+    drawingCanvas.addEventListener('pointerleave', onPointerUp, { passive: false });
+    drawingCanvas.addEventListener('pointercancel', onPointerUp, { passive: false });
 
-    // Touch events for gestures only
-    drawingCanvas.addEventListener('touchstart', touchStart, { passive: false });
-    drawingCanvas.addEventListener('touchend', touchEnd, { passive: false });
-    drawingCanvas.addEventListener('touchmove', (e) => {
-      if (e.touches.length > 1) e.preventDefault();
-    }, { passive: false });
+    drawingCanvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    drawingCanvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+    drawingCanvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
-    // Prevent context menu
-    drawingCanvas.addEventListener('contextmenu', e => e.preventDefault());
-
-    setupUI();
-    startRenderLoop();
+    setupToolbar();
+    setupOutsideClick();
   }
 
-  // ==========================================
-  // CANVAS SIZING
-  // ==========================================
-  function resize() {
+  function debounce(fn, wait) {
+    let t;
+    return function (...args) {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), wait);
+    };
+  }
+
+  function resizeCanvases() {
     const wrap = document.getElementById('canvasWrap');
     if (!wrap) return;
     const rect = wrap.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-
+    if (rect.width <= 0 || rect.height <= 0) {
+      setTimeout(resizeCanvases, 100);
+      return;
+    }
     dpr = window.devicePixelRatio || 1;
-    canvasWidth = rect.width;
-    canvasHeight = rect.height;
-
     [drawingCanvas, bgCanvas].forEach(c => {
-      c.width = canvasWidth * dpr;
-      c.height = canvasHeight * dpr;
-      c.style.width = canvasWidth + 'px';
-      c.style.height = canvasHeight + 'px';
+      c.width = rect.width * dpr;
+      c.height = rect.height * dpr;
+      c.style.width = rect.width + 'px';
+      c.style.height = rect.height + 'px';
     });
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    paintBackground();
-    fullRedraw();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    bgCtx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    bgCtx.scale(dpr, dpr);
+    drawBackground();
+    redrawStrokes();
   }
 
-  // ==========================================
-  // RENDER LOOP (requestAnimationFrame)
-  // ==========================================
-  function startRenderLoop() {
-    function loop() {
-      if (needsRender) {
-        needsRender = false;
-        fullRedraw();
-      }
-      rafId = requestAnimationFrame(loop);
-    }
-    rafId = requestAnimationFrame(loop);
-  }
-
-  function requestRender() {
-    needsRender = true;
-  }
-
-  // ==========================================
-  // COORDINATE HELPERS
-  // ==========================================
-  function getXY(e) {
-    const rect = drawingCanvas.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-      pressure: e.pressure != null ? e.pressure : 0.5
-    };
-  }
-
-  function acceptsInput(e) {
-    if (e.pointerType === 'mouse' || e.pointerType === 'pen') return true;
-    if (e.pointerType === 'touch') return fingerDrawEnabled;
-    return true;
-  }
-
-  // ==========================================
-  // POINTER HANDLERS
-  // ==========================================
-  function pointerDown(e) {
-    if (currentTool === 'select' || currentTool === 'lasso') return;
-    if (!acceptsInput(e)) return;
-    if (activeTouchCount > 1) return;
-
-    e.preventDefault();
-    try { drawingCanvas.setPointerCapture(e.pointerId); } catch (_) {}
-
-    if (menuOpen) closePenSettings();
-
-    const pt = getXY(e);
-    isDrawing = true;
-    currentPoints = [pt.x, pt.y];
-    currentPressures = [pt.pressure];
-
-    // Draw initial dot immediately on screen
-    if (currentTool !== 'eraser') {
-      drawDot(pt.x, pt.y, pt.pressure);
-    }
-  }
-
-  function pointerMove(e) {
-    if (!isDrawing) return;
-    if (!acceptsInput(e)) return;
-    if (activeTouchCount > 1) {
-      cancelStroke(e);
-      return;
-    }
-
-    e.preventDefault();
-
-    // Use coalesced events for smoothness
-    const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-    for (const evt of evts) {
-      const pt = getXY(evt);
-      const len = currentPoints.length;
-      const prevX = currentPoints[len - 2];
-      const prevY = currentPoints[len - 1];
-
-      // Skip if barely moved
-      const dx = pt.x - prevX;
-      const dy = pt.y - prevY;
-      if (dx * dx + dy * dy < 1) continue;
-
-      currentPoints.push(pt.x, pt.y);
-      currentPressures.push(pt.pressure);
-
-      if (currentTool === 'eraser') {
-        eraseAtPoint(pt.x, pt.y, penSize * 4);
-      } else {
-        // Draw latest segment immediately for zero-lag feel
-        drawLatestSegment();
-      }
-    }
-  }
-
-  function pointerUp(e) {
-    if (!isDrawing) return;
-    isDrawing = false;
-
-    try { if (e && e.pointerId != null) drawingCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
-
-    if (currentPoints.length >= 2 && currentTool !== 'eraser') {
-      // Build stroke object
-      let stroke = buildStroke();
-
-      // Auto shape recognition on lift
-      if (shapeRecognitionEnabled && currentTool === 'pen' && pointCount(stroke) > 8) {
-        const shape = detectShape(stroke);
-        if (shape) {
-          stroke = shapeToStroke(shape, stroke);
-          toast(`✨ ${shape.type}`);
-        }
-      }
-
-      // Beautify
-      if (beautifyEnabled && currentTool === 'pen' && !stroke.shape) {
-        stroke = beautify(stroke);
-      }
-
-      // Scribble erase check
-      if (scribbleEraseEnabled && currentTool === 'pen' && pointCount(stroke) > 25) {
-        if (isScribble(stroke)) {
-          eraseUnderScribble(stroke);
-          currentPoints = [];
-          currentPressures = [];
-          requestRender();
-          return;
-        }
-      }
-
-      strokes.push(stroke);
-      redoStack = [];
-    }
-
-    currentPoints = [];
-    currentPressures = [];
-    requestRender();
-  }
-
-  function cancelStroke(e) {
-    isDrawing = false;
-    currentPoints = [];
-    currentPressures = [];
-    try { if (e && e.pointerId != null) drawingCanvas.releasePointerCapture(e.pointerId); } catch (_) {}
-    requestRender();
-  }
-
-  // ==========================================
-  // BUILD STROKE FROM FLAT ARRAYS
-  // ==========================================
-  function buildStroke() {
-    return {
-      tool: currentTool,
-      color: penColor,
-      size: penSize,
-      opacity: penOpacity,
-      style: currentTool === 'pen' ? penStyle : 'solid',
-      xs: Float32Array.from(currentPoints.filter((_, i) => i % 2 === 0)),
-      ys: Float32Array.from(currentPoints.filter((_, i) => i % 2 === 1)),
-      ps: Float32Array.from(currentPressures)
-    };
-  }
-
-  function pointCount(stroke) {
-    return stroke.xs ? stroke.xs.length : 0;
-  }
-
-  // ==========================================
-  // IMMEDIATE DRAWING (zero lag)
-  // ==========================================
-  function drawDot(x, y, pressure) {
-    const isHL = currentTool === 'highlighter';
-    ctx.save();
-    ctx.globalAlpha = isHL ? 0.3 : penOpacity;
-    ctx.fillStyle = penColor;
-    ctx.beginPath();
-    const r = isHL ? penSize / 2 : penSize * (0.5 + pressure * 0.4);
-    ctx.arc(x, y, Math.max(r, 0.5), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function drawLatestSegment() {
-    const len = currentPoints.length / 2;
-    if (len < 2) return;
-
-    const isHL = currentTool === 'highlighter';
-
-    ctx.save();
-    ctx.globalAlpha = isHL ? 0.3 : penOpacity;
-    ctx.strokeStyle = penColor;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    if (len === 2) {
-      // Only 2 points - draw simple line
-      const x0 = currentPoints[0], y0 = currentPoints[1];
-      const x1 = currentPoints[2], y1 = currentPoints[3];
-      const p = currentPressures[1] || 0.5;
-      ctx.lineWidth = isHL ? penSize : penSize * (0.5 + p * 0.5);
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x1, y1);
-      ctx.stroke();
-    } else if (len === 3) {
-      // 3 points - quadratic from start to midpoint
-      const i = (len - 3) * 2;
-      const x0 = currentPoints[i], y0 = currentPoints[i + 1];
-      const x1 = currentPoints[i + 2], y1 = currentPoints[i + 3];
-      const x2 = currentPoints[i + 4], y2 = currentPoints[i + 5];
-      const p = currentPressures[len - 1] || 0.5;
-      ctx.lineWidth = isHL ? penSize : penSize * (0.5 + p * 0.5);
-
-      const mx = (x1 + x2) / 2;
-      const my = (y1 + y2) / 2;
-
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.quadraticCurveTo(x1, y1, mx, my);
-      ctx.stroke();
-    } else {
-      // 4+ points - draw last smooth segment
-      const i = (len - 3) * 2;
-      const ax = currentPoints[i], ay = currentPoints[i + 1];
-      const bx = currentPoints[i + 2], by = currentPoints[i + 3];
-      const cx = currentPoints[i + 4], cy = currentPoints[i + 5];
-
-      const p = currentPressures[len - 1] || 0.5;
-      ctx.lineWidth = isHL ? penSize : penSize * (0.5 + p * 0.5);
-
-      const m1x = (ax + bx) / 2, m1y = (ay + by) / 2;
-      const m2x = (bx + cx) / 2, m2y = (by + cy) / 2;
-
-      ctx.beginPath();
-      ctx.moveTo(m1x, m1y);
-      ctx.quadraticCurveTo(bx, by, m2x, m2y);
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
-
-  // ==========================================
-  // FULL REDRAW
-  // ==========================================
-  function fullRedraw() {
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-    // Draw all saved strokes
-    for (let i = 0; i < strokes.length; i++) {
-      paintStroke(strokes[i]);
-    }
-
-    // Draw current in-progress stroke
-    if (currentPoints.length >= 4) {
-      paintCurrentStroke();
-    } else if (currentPoints.length === 2) {
-      const isHL = currentTool === 'highlighter';
-      ctx.save();
-      ctx.globalAlpha = isHL ? 0.3 : penOpacity;
-      ctx.fillStyle = penColor;
-      ctx.beginPath();
-      const r = penSize * (0.5 + (currentPressures[0] || 0.5) * 0.4);
-      ctx.arc(currentPoints[0], currentPoints[1], Math.max(r, 0.5), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  // ==========================================
-  // PAINT SAVED STROKE
-  // ==========================================
-  function paintStroke(s) {
-    if (!s.xs || s.xs.length < 1) return;
-    const n = s.xs.length;
-    const isHL = s.tool === 'highlighter';
-
-    ctx.save();
-    ctx.globalAlpha = isHL ? 0.3 : (s.opacity || 1);
-    ctx.strokeStyle = s.color;
-    ctx.fillStyle = s.color;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    // Single dot
-    if (n === 1) {
-      ctx.beginPath();
-      ctx.arc(s.xs[0], s.ys[0], s.size / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
-
-    const style = s.style || 'solid';
-    switch (style) {
-      case 'dashed':
-        paintDashed(s);
-        break;
-      case 'dotted':
-        paintDotted(s);
-        break;
-      case 'double':
-        paintDouble(s);
-        break;
-      case 'curly':
-        paintWavy(s);
-        break;
-      case 'zigzag':
-        paintZigzag(s);
-        break;
-      default:
-        paintSolid(s);
-        break;
-    }
-
-    ctx.restore();
-  }
-
-  function paintSolid(s) {
-    const n = s.xs.length;
-    const isHL = s.tool === 'highlighter';
-
-    if (isHL) {
-      // Highlighter: uniform width, single path
-      ctx.lineWidth = s.size;
-      ctx.beginPath();
-      ctx.moveTo(s.xs[0], s.ys[0]);
-      for (let i = 1; i < n - 1; i++) {
-        const mx = (s.xs[i] + s.xs[i + 1]) / 2;
-        const my = (s.ys[i] + s.ys[i + 1]) / 2;
-        ctx.quadraticCurveTo(s.xs[i], s.ys[i], mx, my);
-      }
-      ctx.lineTo(s.xs[n - 1], s.ys[n - 1]);
-      ctx.stroke();
-    } else {
-      // Pen: pressure-sensitive, segment by segment
-      for (let i = 1; i < n; i++) {
-        const p = s.ps ? (s.ps[i] || 0.5) : 0.5;
-        ctx.lineWidth = s.size * (0.5 + p * 0.5);
-
-        if (n === 2) {
-          ctx.beginPath();
-          ctx.moveTo(s.xs[0], s.ys[0]);
-          ctx.lineTo(s.xs[1], s.ys[1]);
-          ctx.stroke();
-          break;
-        }
-
-        if (i === 1) {
-          const mx = (s.xs[0] + s.xs[1]) / 2;
-          const my = (s.ys[0] + s.ys[1]) / 2;
-          ctx.beginPath();
-          ctx.moveTo(s.xs[0], s.ys[0]);
-          ctx.lineTo(mx, my);
-          ctx.stroke();
-        } else if (i < n - 1) {
-          const ax = s.xs[i - 2], ay = s.ys[i - 2];
-          const bx = s.xs[i - 1], by = s.ys[i - 1];
-          const cx = s.xs[i], cy = s.ys[i];
-          const m1x = (ax + bx) / 2, m1y = (ay + by) / 2;
-          const m2x = (bx + cx) / 2, m2y = (by + cy) / 2;
-          ctx.beginPath();
-          ctx.moveTo(m1x, m1y);
-          ctx.quadraticCurveTo(bx, by, m2x, m2y);
-          ctx.stroke();
-        } else {
-          const ax = s.xs[i - 2], ay = s.ys[i - 2];
-          const bx = s.xs[i - 1], by = s.ys[i - 1];
-          const cx = s.xs[i], cy = s.ys[i];
-          const m1x = (ax + bx) / 2, m1y = (ay + by) / 2;
-          ctx.beginPath();
-          ctx.moveTo(m1x, m1y);
-          ctx.quadraticCurveTo(bx, by, cx, cy);
-          ctx.stroke();
-        }
-      }
-    }
-  }
-
-  function paintDashed(s) {
-    const n = s.xs.length;
-    ctx.lineWidth = s.size;
-    ctx.setLineDash([s.size * 3, s.size * 2]);
-    ctx.beginPath();
-    ctx.moveTo(s.xs[0], s.ys[0]);
-    for (let i = 1; i < n - 1; i++) {
-      const mx = (s.xs[i] + s.xs[i + 1]) / 2;
-      const my = (s.ys[i] + s.ys[i + 1]) / 2;
-      ctx.quadraticCurveTo(s.xs[i], s.ys[i], mx, my);
-    }
-    ctx.lineTo(s.xs[n - 1], s.ys[n - 1]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  function paintDotted(s) {
-    const n = s.xs.length;
-    const spacing = s.size * 2.5;
-    ctx.beginPath();
-    ctx.arc(s.xs[0], s.ys[0], s.size / 2, 0, Math.PI * 2);
-    ctx.fill();
-    let lx = s.xs[0], ly = s.ys[0];
-    for (let i = 1; i < n; i++) {
-      const dx = s.xs[i] - lx, dy = s.ys[i] - ly;
-      if (dx * dx + dy * dy >= spacing * spacing) {
-        ctx.beginPath();
-        ctx.arc(s.xs[i], s.ys[i], s.size / 2, 0, Math.PI * 2);
-        ctx.fill();
-        lx = s.xs[i]; ly = s.ys[i];
-      }
-    }
-  }
-
-  function paintDouble(s) {
-    const n = s.xs.length;
-    if (n < 2) return;
-    const off = s.size * 0.9;
-    ctx.lineWidth = Math.max(1, s.size / 3);
-
-    const u1 = [], u2 = [], l1 = [], l2 = [];
-    for (let i = 0; i < n; i++) {
-      let angle;
-      if (i === 0) angle = Math.atan2(s.ys[1] - s.ys[0], s.xs[1] - s.xs[0]);
-      else if (i === n - 1) angle = Math.atan2(s.ys[n - 1] - s.ys[n - 2], s.xs[n - 1] - s.xs[n - 2]);
-      else angle = Math.atan2(s.ys[i + 1] - s.ys[i - 1], s.xs[i + 1] - s.xs[i - 1]);
-      const nx = Math.cos(angle + Math.PI / 2) * off;
-      const ny = Math.sin(angle + Math.PI / 2) * off;
-      u1.push(s.xs[i] + nx); u2.push(s.ys[i] + ny);
-      l1.push(s.xs[i] - nx); l2.push(s.ys[i] - ny);
-    }
-
-    [{ x: u1, y: u2 }, { x: l1, y: l2 }].forEach(p => {
-      ctx.beginPath();
-      ctx.moveTo(p.x[0], p.y[0]);
-      for (let i = 1; i < n - 1; i++) {
-        const mx = (p.x[i] + p.x[i + 1]) / 2;
-        const my = (p.y[i] + p.y[i + 1]) / 2;
-        ctx.quadraticCurveTo(p.x[i], p.y[i], mx, my);
-      }
-      ctx.lineTo(p.x[n - 1], p.y[n - 1]);
-      ctx.stroke();
+  // ========== GESTURES ==========
+  function handleTouchStart(e) {
+    if (!gesturesEnabled) return;
+    Array.from(e.touches).forEach(touch => {
+      activeTouches.set(touch.identifier, {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        startTime: Date.now()
+      });
     });
-  }
-
-  function paintWavy(s) {
-    const n = s.xs.length;
-    if (n < 2) return;
-    const amp = s.size * 1.8;
-    const freq = s.size * 3.5;
-    ctx.lineWidth = s.size;
-
-    const cd = [0];
-    for (let i = 1; i < n; i++) {
-      const dx = s.xs[i] - s.xs[i - 1], dy = s.ys[i] - s.ys[i - 1];
-      cd.push(cd[i - 1] + Math.sqrt(dx * dx + dy * dy));
-    }
-    const total = cd[n - 1];
-    if (total < 5) return;
-
-    const steps = Math.max(30, Math.floor(total / 2));
-    ctx.beginPath();
-    for (let st = 0; st <= steps; st++) {
-      const td = (st / steps) * total;
-      let si = 1;
-      while (si < n && cd[si] < td) si++;
-      if (si >= n) si = n - 1;
-      const sl = cd[si] - cd[si - 1];
-      const t = sl > 0 ? (td - cd[si - 1]) / sl : 0;
-      const x = s.xs[si - 1] + (s.xs[si] - s.xs[si - 1]) * t;
-      const y = s.ys[si - 1] + (s.ys[si] - s.ys[si - 1]) * t;
-      const a = Math.atan2(s.ys[si] - s.ys[si - 1], s.xs[si] - s.xs[si - 1]);
-      const w = Math.sin((td / freq) * Math.PI * 2) * amp;
-      const wx = x + Math.cos(a + Math.PI / 2) * w;
-      const wy = y + Math.sin(a + Math.PI / 2) * w;
-      st === 0 ? ctx.moveTo(wx, wy) : ctx.lineTo(wx, wy);
-    }
-    ctx.stroke();
-  }
-
-  function paintZigzag(s) {
-    const n = s.xs.length;
-    if (n < 2) return;
-    const amp = s.size * 1.5;
-    const sp = s.size * 1.8;
-    ctx.lineWidth = s.size;
-
-    const cd = [0];
-    for (let i = 1; i < n; i++) {
-      const dx = s.xs[i] - s.xs[i - 1], dy = s.ys[i] - s.ys[i - 1];
-      cd.push(cd[i - 1] + Math.sqrt(dx * dx + dy * dy));
-    }
-    const total = cd[n - 1];
-    if (total < 5) return;
-
-    const peaks = Math.max(3, Math.floor(total / sp));
-    ctx.beginPath();
-    for (let st = 0; st <= peaks; st++) {
-      const td = (st / peaks) * total;
-      let si = 1;
-      while (si < n && cd[si] < td) si++;
-      if (si >= n) si = n - 1;
-      const sl = cd[si] - cd[si - 1];
-      const t = sl > 0 ? (td - cd[si - 1]) / sl : 0;
-      const x = s.xs[si - 1] + (s.xs[si] - s.xs[si - 1]) * t;
-      const y = s.ys[si - 1] + (s.ys[si] - s.ys[si - 1]) * t;
-      const a = Math.atan2(s.ys[si] - s.ys[si - 1], s.xs[si] - s.xs[si - 1]);
-      const zo = (st % 2 === 0 ? 1 : -1) * amp;
-      const zx = x + Math.cos(a + Math.PI / 2) * zo;
-      const zy = y + Math.sin(a + Math.PI / 2) * zo;
-      st === 0 ? ctx.moveTo(zx, zy) : ctx.lineTo(zx, zy);
-    }
-    ctx.stroke();
-  }
-
-  // ==========================================
-  // PAINT CURRENT (in-progress) STROKE
-  // ==========================================
-  function paintCurrentStroke() {
-    if (currentTool === 'eraser') return;
-    const n = currentPoints.length / 2;
-    if (n < 2) return;
-
-    const isHL = currentTool === 'highlighter';
-
-    ctx.save();
-    ctx.globalAlpha = isHL ? 0.3 : penOpacity;
-    ctx.strokeStyle = penColor;
-    ctx.fillStyle = penColor;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    const style = currentTool === 'pen' ? penStyle : 'solid';
-
-    if (style !== 'solid') {
-      // For non-solid styles, build temp stroke and paint
-      const tmp = buildStroke();
-      ctx.restore();
-      paintStroke(tmp);
-      return;
-    }
-
-    // Solid - smooth pressure-sensitive drawing
-    if (isHL) {
-      ctx.lineWidth = penSize;
-      ctx.beginPath();
-      ctx.moveTo(currentPoints[0], currentPoints[1]);
-      for (let i = 1; i < n - 1; i++) {
-        const x1 = currentPoints[i * 2], y1 = currentPoints[i * 2 + 1];
-        const x2 = currentPoints[(i + 1) * 2], y2 = currentPoints[(i + 1) * 2 + 1];
-        ctx.quadraticCurveTo(x1, y1, (x1 + x2) / 2, (y1 + y2) / 2);
-      }
-      ctx.lineTo(currentPoints[(n - 1) * 2], currentPoints[(n - 1) * 2 + 1]);
-      ctx.stroke();
-    } else {
-      // Pressure-sensitive segments
-      for (let i = 1; i < n; i++) {
-        const p = currentPressures[i] || 0.5;
-        ctx.lineWidth = penSize * (0.5 + p * 0.5);
-
-        if (n === 2) {
-          ctx.beginPath();
-          ctx.moveTo(currentPoints[0], currentPoints[1]);
-          ctx.lineTo(currentPoints[2], currentPoints[3]);
-          ctx.stroke();
-          break;
-        }
-
-        const idx = i * 2;
-        if (i === 1) {
-          const mx = (currentPoints[0] + currentPoints[2]) / 2;
-          const my = (currentPoints[1] + currentPoints[3]) / 2;
-          ctx.beginPath();
-          ctx.moveTo(currentPoints[0], currentPoints[1]);
-          ctx.lineTo(mx, my);
-          ctx.stroke();
-        } else if (i < n - 1) {
-          const ax = currentPoints[idx - 4], ay = currentPoints[idx - 3];
-          const bx = currentPoints[idx - 2], by = currentPoints[idx - 1];
-          const cx = currentPoints[idx], cy = currentPoints[idx + 1];
-          const m1x = (ax + bx) / 2, m1y = (ay + by) / 2;
-          const m2x = (bx + cx) / 2, m2y = (by + cy) / 2;
-          ctx.beginPath();
-          ctx.moveTo(m1x, m1y);
-          ctx.quadraticCurveTo(bx, by, m2x, m2y);
-          ctx.stroke();
-        } else {
-          const ax = currentPoints[idx - 4], ay = currentPoints[idx - 3];
-          const bx = currentPoints[idx - 2], by = currentPoints[idx - 1];
-          const cx = currentPoints[idx], cy = currentPoints[idx + 1];
-          const m1x = (ax + bx) / 2, m1y = (ay + by) / 2;
-          ctx.beginPath();
-          ctx.moveTo(m1x, m1y);
-          ctx.quadraticCurveTo(bx, by, cx, cy);
-          ctx.stroke();
-        }
-      }
-    }
-
-    ctx.restore();
-  }
-
-  // ==========================================
-  // ERASER
-  // ==========================================
-  function eraseAtPoint(x, y, radius) {
-    const r2 = radius * radius;
-    let hit = false;
-    strokes = strokes.filter(s => {
-      for (let i = 0; i < s.xs.length; i++) {
-        const dx = s.xs[i] - x, dy = s.ys[i] - y;
-        if (dx * dx + dy * dy < r2) { hit = true; return false; }
-      }
-      return true;
-    });
-    if (hit) requestRender();
-  }
-
-  // ==========================================
-  // SCRIBBLE ERASE
-  // ==========================================
-  function isScribble(stroke) {
-    const n = stroke.xs.length;
-    if (n < 20) return false;
-
-    const start = Math.max(0, n - 30);
-    let dirChanges = 0, sigChanges = 0;
-    let ldx = 0, ldy = 0;
-
-    for (let i = start + 1; i < n; i++) {
-      const dx = stroke.xs[i] - stroke.xs[i - 1];
-      const dy = stroke.ys[i] - stroke.ys[i - 1];
-      const mag = Math.sqrt(dx * dx + dy * dy);
-      if (i > start + 1 && mag > 1) {
-        const dot = dx * ldx + dy * ldy;
-        if (dot < 0) dirChanges++;
-        const mp = Math.sqrt(ldx * ldx + ldy * ldy);
-        if (mp > 0 && dot / (mag * mp) < -0.3) sigChanges++;
-      }
-      ldx = dx; ldy = dy;
-    }
-
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    let pathLen = 0;
-    for (let i = start; i < n; i++) {
-      if (stroke.xs[i] < minX) minX = stroke.xs[i];
-      if (stroke.xs[i] > maxX) maxX = stroke.xs[i];
-      if (stroke.ys[i] < minY) minY = stroke.ys[i];
-      if (stroke.ys[i] > maxY) maxY = stroke.ys[i];
-      if (i > start) {
-        const dx = stroke.xs[i] - stroke.xs[i - 1];
-        const dy = stroke.ys[i] - stroke.ys[i - 1];
-        pathLen += Math.sqrt(dx * dx + dy * dy);
-      }
-    }
-
-    const w = maxX - minX, h = maxY - minY;
-    const diag = Math.sqrt(w * w + h * h);
-    if (diag < 20) return false;
-
-    return sigChanges >= 4 && pathLen / diag > 3 && dirChanges >= 5;
-  }
-
-  function eraseUnderScribble(stroke) {
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < stroke.xs.length; i++) {
-      if (stroke.xs[i] < minX) minX = stroke.xs[i];
-      if (stroke.xs[i] > maxX) maxX = stroke.xs[i];
-      if (stroke.ys[i] < minY) minY = stroke.ys[i];
-      if (stroke.ys[i] > maxY) maxY = stroke.ys[i];
-    }
-    minX -= 20; maxX += 20; minY -= 20; maxY += 20;
-
-    strokes = strokes.filter(s => {
-      for (let i = 0; i < s.xs.length; i++) {
-        if (s.xs[i] >= minX && s.xs[i] <= maxX && s.ys[i] >= minY && s.ys[i] <= maxY) return false;
-      }
-      return true;
-    });
-    toast('⚡ Scribble erased!');
-  }
-
-  // ==========================================
-  // SHAPE RECOGNITION
-  // ==========================================
-  function detectShape(stroke) {
-    const n = stroke.xs.length;
-    if (n < 8) return null;
-
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < n; i++) {
-      if (stroke.xs[i] < minX) minX = stroke.xs[i];
-      if (stroke.xs[i] > maxX) maxX = stroke.xs[i];
-      if (stroke.ys[i] < minY) minY = stroke.ys[i];
-      if (stroke.ys[i] > maxY) maxY = stroke.ys[i];
-    }
-
-    const w = maxX - minX, h = maxY - minY;
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    const dx = stroke.xs[n - 1] - stroke.xs[0];
-    const dy = stroke.ys[n - 1] - stroke.ys[0];
-    const closeDist = Math.sqrt(dx * dx + dy * dy);
-    const maxDim = Math.max(w, h);
-
-    // Check straight line
-    let pathLen = 0;
-    for (let i = 1; i < n; i++) {
-      const ddx = stroke.xs[i] - stroke.xs[i - 1];
-      const ddy = stroke.ys[i] - stroke.ys[i - 1];
-      pathLen += Math.sqrt(ddx * ddx + ddy * ddy);
-    }
-    const endDist = Math.sqrt(Math.pow(stroke.xs[n - 1] - stroke.xs[0], 2) + Math.pow(stroke.ys[n - 1] - stroke.ys[0], 2));
-    const straightness = pathLen > 0 ? endDist / pathLen : 0;
-
-    if (straightness > 0.96 && endDist > 25) {
-      return { type: 'Line', x1: stroke.xs[0], y1: stroke.ys[0], x2: stroke.xs[n - 1], y2: stroke.ys[n - 1] };
-    }
-
-    if (w < 25 || h < 25) return null;
-
-    const isClosed = closeDist < maxDim * 0.35;
-    if (!isClosed) {
-      if (straightness > 0.82 && n > 15) {
-        return { type: 'Arrow', x1: stroke.xs[0], y1: stroke.ys[0], x2: stroke.xs[n - 1], y2: stroke.ys[n - 1] };
-      }
-      return null;
-    }
-
-    // Closed shape analysis
-    const ar = w / h;
-    let distSum = 0, distSqSum = 0;
-    for (let i = 0; i < n; i++) {
-      const d = Math.sqrt(Math.pow(stroke.xs[i] - cx, 2) + Math.pow(stroke.ys[i] - cy, 2));
-      distSum += d;
-      distSqSum += d * d;
-    }
-    const avgDist = distSum / n;
-    const variance = distSqSum / n - avgDist * avgDist;
-    const cv = Math.sqrt(Math.max(0, variance)) / avgDist;
-
-    if (cv < 0.18) {
-      return {
-        type: (ar > 0.85 && ar < 1.18) ? 'Circle' : 'Ellipse',
-        cx, cy, rx: w / 2, ry: h / 2
-      };
-    }
-
-    // Count corners
-    const corners = countCornersFlat(stroke);
-    if (corners === 3) return { type: 'Triangle', cx, cy, w, h, minX, minY, maxX, maxY, stroke };
-    if (corners === 4) {
-      let edgeScore = 0;
-      for (let i = 0; i < n; i++) {
-        if (Math.abs(stroke.xs[i] - minX) < w * 0.12 || Math.abs(stroke.xs[i] - maxX) < w * 0.12 ||
-            Math.abs(stroke.ys[i] - minY) < h * 0.12 || Math.abs(stroke.ys[i] - maxY) < h * 0.12) edgeScore++;
-      }
-      if (edgeScore / n > 0.5) {
-        return {
-          type: (ar > 0.85 && ar < 1.18) ? 'Square' : 'Rectangle',
-          minX, minY, maxX, maxY
-        };
-      }
-    }
-
-    if (cv < 0.28) {
-      return {
-        type: (ar > 0.85 && ar < 1.18) ? 'Circle' : 'Ellipse',
-        cx, cy, rx: w / 2, ry: h / 2
-      };
-    }
-
-    return null;
-  }
-
-  function countCornersFlat(stroke) {
-    const n = stroke.xs.length;
-    if (n < 8) return 0;
-    let corners = 0;
-    const step = Math.max(2, Math.floor(n / 30));
-    for (let i = step * 2; i < n - step * 2; i += step) {
-      const a1 = Math.atan2(stroke.ys[i] - stroke.ys[i - step * 2], stroke.xs[i] - stroke.xs[i - step * 2]);
-      const a2 = Math.atan2(stroke.ys[i + step * 2] - stroke.ys[i], stroke.xs[i + step * 2] - stroke.xs[i]);
-      let diff = Math.abs(a2 - a1);
-      if (diff > Math.PI) diff = 2 * Math.PI - diff;
-      if (diff > Math.PI / 4) corners++;
-    }
-    return Math.min(corners, 6);
-  }
-
-  function shapeToStroke(shape, original) {
-    const xs = [], ys = [], ps = [];
-    const p = 0.7;
-
-    switch (shape.type) {
-      case 'Circle':
-      case 'Ellipse':
-        for (let i = 0; i <= 80; i++) {
-          const a = (i / 80) * Math.PI * 2;
-          xs.push(shape.cx + Math.cos(a) * shape.rx);
-          ys.push(shape.cy + Math.sin(a) * shape.ry);
-          ps.push(p);
-        }
-        break;
-      case 'Rectangle':
-      case 'Square':
-        [[shape.minX, shape.minY], [shape.maxX, shape.minY],
-         [shape.maxX, shape.maxY], [shape.minX, shape.maxY],
-         [shape.minX, shape.minY]].forEach(([x, y]) => { xs.push(x); ys.push(y); ps.push(p); });
-        break;
-      case 'Triangle': {
-        const s = shape;
-        // Find actual triangle vertices from the stroke
-        let topIdx = 0;
-        for (let i = 1; i < s.stroke.xs.length; i++) {
-          if (s.stroke.ys[i] < s.stroke.ys[topIdx]) topIdx = i;
-        }
-        const top = { x: s.stroke.xs[topIdx], y: s.stroke.ys[topIdx] };
-        const bl = { x: s.minX, y: s.maxY };
-        const br = { x: s.maxX, y: s.maxY };
-        [top, br, bl, top].forEach(v => { xs.push(v.x); ys.push(v.y); ps.push(p); });
-        break;
-      }
-      case 'Line':
-        xs.push(shape.x1, shape.x2); ys.push(shape.y1, shape.y2); ps.push(p, p);
-        break;
-      case 'Arrow': {
-        xs.push(shape.x1, shape.x2); ys.push(shape.y1, shape.y2); ps.push(p, p);
-        const ang = Math.atan2(shape.y2 - shape.y1, shape.x2 - shape.x1);
-        const al = 20, aa = Math.PI / 6;
-        xs.push(shape.x2 - al * Math.cos(ang - aa)); ys.push(shape.y2 - al * Math.sin(ang - aa)); ps.push(p);
-        xs.push(shape.x2); ys.push(shape.y2); ps.push(p);
-        xs.push(shape.x2 - al * Math.cos(ang + aa)); ys.push(shape.y2 - al * Math.sin(ang + aa)); ps.push(p);
-        break;
-      }
-      default: return original;
-    }
-
-    return {
-      ...original,
-      xs: Float32Array.from(xs),
-      ys: Float32Array.from(ys),
-      ps: Float32Array.from(ps),
-      style: 'solid',
-      shape: shape.type
-    };
-  }
-
-  // ==========================================
-  // BEAUTIFY
-  // ==========================================
-  function beautify(stroke) {
-    const n = stroke.xs.length;
-    if (n < 4) return stroke;
-
-    // Simplify
-    const sx = [stroke.xs[0]], sy = [stroke.ys[0]], sp = [stroke.ps[0]];
-    for (let i = 1; i < n - 1; i++) {
-      const dx = stroke.xs[i] - sx[sx.length - 1];
-      const dy = stroke.ys[i] - sy[sy.length - 1];
-      if (dx * dx + dy * dy >= 2.25) { // 1.5^2
-        sx.push(stroke.xs[i]); sy.push(stroke.ys[i]); sp.push(stroke.ps[i]);
-      }
-    }
-    sx.push(stroke.xs[n - 1]); sy.push(stroke.ys[n - 1]); sp.push(stroke.ps[n - 1]);
-
-    // Chaikin smooth x2
-    let rx = sx, ry = sy, rp = sp;
-    for (let pass = 0; pass < 2; pass++) {
-      const nx = [rx[0]], ny = [ry[0]], np = [rp[0]];
-      for (let i = 0; i < rx.length - 1; i++) {
-        nx.push(0.75 * rx[i] + 0.25 * rx[i + 1]);
-        ny.push(0.75 * ry[i] + 0.25 * ry[i + 1]);
-        np.push(0.75 * rp[i] + 0.25 * rp[i + 1]);
-        nx.push(0.25 * rx[i] + 0.75 * rx[i + 1]);
-        ny.push(0.25 * ry[i] + 0.75 * ry[i + 1]);
-        np.push(0.25 * rp[i] + 0.75 * rp[i + 1]);
-      }
-      nx.push(rx[rx.length - 1]); ny.push(ry[ry.length - 1]); np.push(rp[rp.length - 1]);
-      rx = nx; ry = ny; rp = np;
-    }
-
-    return {
-      ...stroke,
-      xs: Float32Array.from(rx),
-      ys: Float32Array.from(ry),
-      ps: Float32Array.from(rp),
-      beautified: true
-    };
-  }
-
-  // ==========================================
-  // TOUCH GESTURES (undo/redo)
-  // ==========================================
-  function touchStart(e) {
-    activeTouchCount = e.touches.length;
-    if (activeTouchCount >= 2) {
+    if (e.touches.length >= 2) {
       gestureStartTime = Date.now();
+      if (isDrawing) {
+        isDrawing = false;
+        currentStroke = null;
+        clearAllTimers();
+        redrawStrokes();
+      }
       e.preventDefault();
     }
   }
 
-  function touchEnd(e) {
-    if (!gesturesEnabled) { activeTouchCount = e.touches.length; return; }
-    const now = Date.now();
-    const dur = now - gestureStartTime;
-    const since = now - lastGestureTime;
+  function handleTouchEnd(e) {
+    if (!gesturesEnabled) return;
+    const endTime = Date.now();
+    const gestureDuration = endTime - gestureStartTime;
+    const timeSinceLastGesture = endTime - lastGestureTime;
 
-    if (dur < 300 && since > 350) {
-      if (activeTouchCount === 2) { lastGestureTime = now; undo(); showHint('↶ Undo'); e.preventDefault(); }
-      else if (activeTouchCount === 3) { lastGestureTime = now; redo(); showHint('↷ Redo'); e.preventDefault(); }
+    if (gestureDuration < 300 && timeSinceLastGesture > 350) {
+      const touchCount = activeTouches.size;
+      if (touchCount === 2) {
+        lastGestureTime = endTime;
+        undo();
+        showGestureHint('↶ Undo');
+        e.preventDefault();
+      } else if (touchCount === 3) {
+        lastGestureTime = endTime;
+        redo();
+        showGestureHint('↷ Redo');
+        e.preventDefault();
+      }
     }
-    activeTouchCount = e.touches.length;
+    Array.from(e.changedTouches).forEach(touch => activeTouches.delete(touch.identifier));
   }
 
-  function showHint(text) {
-    const el = document.getElementById('gestureHint');
-    if (!el) return;
-    el.textContent = text;
-    el.classList.add('show');
-    setTimeout(() => el.classList.remove('show'), 500);
+  function showGestureHint(text) {
+    const hint = document.getElementById('gestureHint');
+    if (!hint) return;
+    hint.textContent = text;
+    hint.classList.add('show');
+    setTimeout(() => hint.classList.remove('show'), 500);
   }
 
-  // ==========================================
-  // UNDO / REDO / CLEAR
-  // ==========================================
-  function undo() {
-    if (!strokes.length) return;
-    redoStack.push(strokes.pop());
-    requestRender();
-    toast('↶ Undone');
-  }
-
-  function redo() {
-    if (!redoStack.length) return;
-    strokes.push(redoStack.pop());
-    requestRender();
-    toast('↷ Redone');
-  }
-
-  function clearCanvas() {
-    if (!confirm('Clear drawing?')) return;
-    strokes = [];
-    redoStack = [];
-    requestRender();
-  }
-
-  function toast(msg) {
-    if (typeof UI !== 'undefined' && UI.showToast) UI.showToast(msg);
-  }
-
-  // ==========================================
-  // BACKGROUND
-  // ==========================================
-  function paintBackground() {
-    if (!bgCtx) return;
-    bgCtx.clearRect(0, 0, canvasWidth, canvasHeight);
-    const w = canvasWidth, h = canvasHeight;
-
-    switch (bgType) {
-      case 'dark':
-        bgCtx.fillStyle = '#0a0a0a'; bgCtx.fillRect(0, 0, w, h); break;
-      case 'white':
-        bgCtx.fillStyle = '#ffffff'; bgCtx.fillRect(0, 0, w, h); break;
-      case 'cream':
-        bgCtx.fillStyle = '#fff9e6'; bgCtx.fillRect(0, 0, w, h); break;
-      case 'lined':
-        bgCtx.fillStyle = '#0a0a0a'; bgCtx.fillRect(0, 0, w, h);
-        bgCtx.strokeStyle = 'rgba(255,255,255,0.1)'; bgCtx.lineWidth = 1;
-        for (let y = 32; y < h; y += 32) { bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(w, y); bgCtx.stroke(); }
-        break;
-      case 'grid':
-        bgCtx.fillStyle = '#0a0a0a'; bgCtx.fillRect(0, 0, w, h);
-        bgCtx.strokeStyle = 'rgba(255,255,255,0.08)'; bgCtx.lineWidth = 1;
-        for (let x = 0; x < w; x += 28) { bgCtx.beginPath(); bgCtx.moveTo(x, 0); bgCtx.lineTo(x, h); bgCtx.stroke(); }
-        for (let y = 0; y < h; y += 28) { bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(w, y); bgCtx.stroke(); }
-        break;
-      case 'dotgrid':
-        bgCtx.fillStyle = '#0a0a0a'; bgCtx.fillRect(0, 0, w, h);
-        bgCtx.fillStyle = 'rgba(255,255,255,0.2)';
-        for (let x = 28; x < w; x += 28) {
-          for (let y = 28; y < h; y += 28) {
-            bgCtx.beginPath(); bgCtx.arc(x, y, 1.5, 0, Math.PI * 2); bgCtx.fill();
-          }
-        }
-        break;
-    }
-  }
-
-  // ==========================================
-  // PEN SETTINGS UI
-  // ==========================================
-  function openPenSettings() {
-    const p = document.getElementById('penSettings');
-    if (p) { p.classList.remove('hidden'); menuOpen = true; }
-  }
-
-  function closePenSettings() {
-    const p = document.getElementById('penSettings');
-    if (p) { p.classList.add('hidden'); menuOpen = false; }
-  }
-
-  function setupUI() {
-    // Outside click to close
+  function setupOutsideClick() {
     document.addEventListener('pointerdown', (e) => {
       if (!menuOpen) return;
       const panel = document.getElementById('penSettings');
-      if (panel && !panel.contains(e.target) && !e.target.closest('.pen-preset')) closePenSettings();
+      const clickedInsidePanel = panel && panel.contains(e.target);
+      const clickedPenTool = e.target.closest('.pen-preset');
+      if (!clickedInsidePanel && !clickedPenTool) closePenSettings();
     }, true);
+  }
 
-    // Pen presets
+  function openPenSettings() {
+    const panel = document.getElementById('penSettings');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    menuOpen = true;
+  }
+
+  function closePenSettings() {
+    const panel = document.getElementById('penSettings');
+    if (!panel) return;
+    panel.classList.add('hidden');
+    menuOpen = false;
+  }
+
+  function togglePenSettings() {
+    if (menuOpen) closePenSettings();
+    else openPenSettings();
+  }
+
+  // ========== TOOLBAR ==========
+  function setupToolbar() {
     document.querySelectorAll('.pen-preset').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1121,14 +190,14 @@ const Canvas = (() => {
         btn.classList.add('active');
         currentTool = 'pen';
         penColor = btn.dataset.color;
-        const cp = document.getElementById('penColorPicker');
-        if (cp) cp.value = penColor;
-        wasActive ? (menuOpen ? closePenSettings() : openPenSettings()) : openPenSettings();
+        const colorPicker = document.getElementById('penColorPicker');
+        if (colorPicker) colorPicker.value = penColor;
+        if (wasActive) togglePenSettings();
+        else openPenSettings();
         updateCursor();
       });
     });
 
-    // Other tools
     document.querySelectorAll('.pen-tool:not(.pen-preset)').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1137,27 +206,29 @@ const Canvas = (() => {
         document.querySelectorAll('.pen-tool').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentTool = tool;
-        if (tool === 'highlighter') { penColor = '#ffff00'; openPenSettings(); }
-        else closePenSettings();
+        if (tool === 'highlighter') {
+          penColor = '#ffff00';
+          openPenSettings();
+        } else {
+          closePenSettings();
+        }
         updateCursor();
       });
     });
 
-    // Thickness
     document.querySelectorAll('.thickness-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         document.querySelectorAll('.thickness-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         penSize = parseInt(btn.dataset.size);
-        const sl = document.getElementById('penSizeSlider');
-        const sv = document.getElementById('penSizeValue');
-        if (sl) sl.value = penSize;
-        if (sv) sv.textContent = penSize;
+        const sizeSlider = document.getElementById('penSizeSlider');
+        const sizeValue = document.getElementById('penSizeValue');
+        if (sizeSlider) sizeSlider.value = penSize;
+        if (sizeValue) sizeValue.textContent = penSize;
       });
     });
 
-    // Pen styles
     document.querySelectorAll('.pen-style-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1167,135 +238,1052 @@ const Canvas = (() => {
       });
     });
 
-    // Auto shape button
-    const asb = document.getElementById('autoShapeBtn');
-    if (asb) asb.addEventListener('click', (e) => {
+    const autoShape = document.getElementById('autoShapeBtn');
+    if (autoShape) {
+      autoShape.addEventListener('click', (e) => {
+        e.stopPropagation();
+        shapeRecognitionEnabled = !shapeRecognitionEnabled;
+        autoShape.classList.toggle('active', shapeRecognitionEnabled);
+        if (typeof UI !== 'undefined') UI.showToast(shapeRecognitionEnabled ? '✨ Auto Shape ON' : 'Auto Shape OFF');
+        const toggle = document.getElementById('shapeRecognitionToggle');
+        if (toggle) toggle.checked = shapeRecognitionEnabled;
+      });
+    }
+
+    document.getElementById('closePenSettings')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      shapeRecognitionEnabled = !shapeRecognitionEnabled;
-      asb.classList.toggle('active', shapeRecognitionEnabled);
-      toast(shapeRecognitionEnabled ? '✨ Auto Shape ON' : 'Auto Shape OFF');
-      const t = document.getElementById('shapeRecognitionToggle');
-      if (t) t.checked = shapeRecognitionEnabled;
+      closePenSettings();
     });
 
-    // Close button
-    document.getElementById('closePenSettings')?.addEventListener('click', (e) => { e.stopPropagation(); closePenSettings(); });
+    const colorPicker = document.getElementById('penColorPicker');
+    if (colorPicker) {
+      colorPicker.addEventListener('input', e => {
+        penColor = e.target.value;
+        const activePreset = document.querySelector('.pen-preset.active .pen-visual');
+        if (activePreset) activePreset.style.background = penColor;
+      });
+    }
 
-    // Color picker
-    const cp = document.getElementById('penColorPicker');
-    if (cp) cp.addEventListener('input', e => {
-      penColor = e.target.value;
-      const vis = document.querySelector('.pen-preset.active .pen-visual');
-      if (vis) vis.style.background = penColor;
+    const sizeSlider = document.getElementById('penSizeSlider');
+    const sizeValue = document.getElementById('penSizeValue');
+    if (sizeSlider) {
+      sizeSlider.addEventListener('input', e => {
+        penSize = parseInt(e.target.value);
+        if (sizeValue) sizeValue.textContent = penSize;
+        document.querySelectorAll('.thickness-btn').forEach(b => b.classList.remove('active'));
+      });
+    }
+
+    const opacitySlider = document.getElementById('penOpacity');
+    const opacityValue = document.getElementById('opacityValue');
+    if (opacitySlider) {
+      opacitySlider.addEventListener('input', e => {
+        penOpacity = parseFloat(e.target.value) / 100;
+        if (opacityValue) opacityValue.textContent = Math.round(penOpacity * 100);
+      });
+    }
+
+    const bgSelect = document.getElementById('canvasBgSelect');
+    if (bgSelect) {
+      bgSelect.addEventListener('change', e => {
+        bgType = e.target.value;
+        drawBackground();
+      });
+    }
+
+    document.getElementById('scribbleEraseToggle')?.addEventListener('change', e => {
+      scribbleEraseEnabled = e.target.checked;
+      if (typeof UI !== 'undefined') UI.showToast(scribbleEraseEnabled ? '⚡ Scribble+Hold Erase ON' : 'Scribble Erase OFF');
     });
 
-    // Size slider
-    const ss = document.getElementById('penSizeSlider');
-    const sv = document.getElementById('penSizeValue');
-    if (ss) ss.addEventListener('input', e => {
-      penSize = parseInt(e.target.value);
-      if (sv) sv.textContent = penSize;
-      document.querySelectorAll('.thickness-btn').forEach(b => b.classList.remove('active'));
-    });
-
-    // Opacity slider
-    const os = document.getElementById('penOpacity');
-    const ov = document.getElementById('opacityValue');
-    if (os) os.addEventListener('input', e => {
-      penOpacity = parseFloat(e.target.value) / 100;
-      if (ov) ov.textContent = Math.round(penOpacity * 100);
-    });
-
-    // Background select
-    const bg = document.getElementById('canvasBgSelect');
-    if (bg) bg.addEventListener('change', e => { bgType = e.target.value; paintBackground(); });
-
-    // Toggles
-    document.getElementById('scribbleEraseToggle')?.addEventListener('change', e => { scribbleEraseEnabled = e.target.checked; });
     document.getElementById('shapeRecognitionToggle')?.addEventListener('change', e => {
       shapeRecognitionEnabled = e.target.checked;
-      const b = document.getElementById('autoShapeBtn');
-      if (b) b.classList.toggle('active', shapeRecognitionEnabled);
+      const btn = document.getElementById('autoShapeBtn');
+      if (btn) btn.classList.toggle('active', shapeRecognitionEnabled);
     });
-    document.getElementById('fingerDrawToggle')?.addEventListener('change', e => { fingerDrawEnabled = e.target.checked; });
+
+    document.getElementById('fingerDrawToggle')?.addEventListener('change', e => {
+      fingerDrawEnabled = e.target.checked;
+    });
+
     document.getElementById('beautifyToggle')?.addEventListener('change', e => {
       beautifyEnabled = e.target.checked;
-      if (beautifyEnabled) { strokes = strokes.map(s => s.beautified ? s : beautify(s)); requestRender(); }
+      if (beautifyEnabled) {
+        strokes = strokes.map(s => beautifyStroke(s));
+        redrawStrokes();
+      }
     });
-    document.getElementById('gesturesToggle')?.addEventListener('change', e => { gesturesEnabled = e.target.checked; });
 
-    // Undo/Redo buttons
+    document.getElementById('gesturesToggle')?.addEventListener('change', e => {
+      gesturesEnabled = e.target.checked;
+    });
+
     document.getElementById('undoBtn')?.addEventListener('click', (e) => { e.stopPropagation(); undo(); });
     document.getElementById('redoBtn')?.addEventListener('click', (e) => { e.stopPropagation(); redo(); });
 
-    // Stop propagation on settings panel
-    const ps = document.getElementById('penSettings');
-    if (ps) { ps.addEventListener('pointerdown', e => e.stopPropagation()); ps.addEventListener('click', e => e.stopPropagation()); }
+    const penSettings = document.getElementById('penSettings');
+    if (penSettings) {
+      penSettings.addEventListener('pointerdown', e => e.stopPropagation());
+      penSettings.addEventListener('click', e => e.stopPropagation());
+    }
   }
 
   function updateCursor() {
     if (!drawingCanvas) return;
-    drawingCanvas.style.cursor = currentTool === 'eraser' ? 'cell' : (currentTool === 'select' || currentTool === 'lasso') ? 'default' : 'crosshair';
+    drawingCanvas.style.cursor =
+      currentTool === 'eraser' ? 'cell' :
+      currentTool === 'select' || currentTool === 'lasso' ? 'default' :
+      'crosshair';
   }
 
-  // ==========================================
-  // EXPORT / THUMBNAIL
-  // ==========================================
-  function exportImage() {
-    const m = document.createElement('canvas');
-    m.width = drawingCanvas.width; m.height = drawingCanvas.height;
-    const mc = m.getContext('2d');
-    mc.drawImage(bgCanvas, 0, 0);
-    mc.drawImage(drawingCanvas, 0, 0);
-    const a = document.createElement('a');
-    a.download = 'notemax-page.png';
-    a.href = m.toDataURL('image/png');
-    a.click();
+  function getPos(e) {
+    const rect = drawingCanvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+      pressure: e.pressure || 0.5
+    };
   }
 
-  function getThumbnail(w = 150, h = 200) {
-    const t = document.createElement('canvas');
-    t.width = w; t.height = h;
-    const tc = t.getContext('2d');
-    tc.drawImage(bgCanvas, 0, 0, w, h);
-    tc.drawImage(drawingCanvas, 0, 0, w, h);
-    return t.toDataURL('image/png');
+  function shouldAcceptInput(e) {
+    if (e.pointerType === 'mouse') return true;
+    if (e.pointerType === 'pen') return true;
+    if (e.pointerType === 'touch') return fingerDrawEnabled;
+    return true;
   }
 
-  // ==========================================
-  // STROKE SERIALIZATION
-  // ==========================================
-  function getStrokes() {
-    return strokes.map(s => ({
-      ...s,
-      xs: Array.from(s.xs),
-      ys: Array.from(s.ys),
-      ps: Array.from(s.ps)
-    }));
+  // ========== TIMER MANAGEMENT ==========
+  function clearAllTimers() {
+    clearShapeHoldTimer();
+    clearScribbleHoldTimer();
   }
 
-  function loadStrokes(data) {
-    strokes = (data || []).map(s => ({
-      ...s,
-      xs: Float32Array.from(s.xs),
-      ys: Float32Array.from(s.ys),
-      ps: Float32Array.from(s.ps)
-    }));
+  function clearShapeHoldTimer() {
+    if (shapeHoldTimer) { clearTimeout(shapeHoldTimer); shapeHoldTimer = null; }
+    hideHoldIndicator('shape');
+  }
+
+  function clearScribbleHoldTimer() {
+    if (scribbleHoldTimer) { clearTimeout(scribbleHoldTimer); scribbleHoldTimer = null; }
+    hideHoldIndicator('scribble');
+    scribbleDetected = false;
+    scribbleHoldPos = null;
+  }
+
+  // ========== SHAPE HOLD ==========
+  function startShapeHoldTimer(pos) {
+    clearShapeHoldTimer();
+    shapeHoldPosition = { x: pos.x, y: pos.y };
+    shapeHoldTriggered = false;
+    shapeHoldTimer = setTimeout(() => {
+      if (isDrawing && currentStroke && currentTool === 'pen' && currentStroke.points.length > 8) {
+        const shape = detectShape(currentStroke.points);
+        if (shape) {
+          shapeHoldTriggered = true;
+          currentStroke.points = generateShapePoints(shape);
+          currentStroke.recognizedShape = shape.type;
+          currentStroke.style = 'solid';
+          strokes.push(currentStroke);
+          redoStack = [];
+          currentStroke = null;
+          isDrawing = false;
+          lastPoint = null;
+          redrawStrokes();
+          showShapeSnapEffect(shape);
+          if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type} snapped!`);
+          if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
+        }
+      }
+      hideHoldIndicator('shape');
+    }, SHAPE_HOLD_DURATION);
+    showHoldIndicator(pos, 'shape', SHAPE_HOLD_DURATION);
+  }
+
+  // ========== SCRIBBLE HOLD ==========
+  function startScribbleHoldTimer(pos) {
+    clearScribbleHoldTimer();
+    scribbleHoldPos = { x: pos.x, y: pos.y };
+    scribbleDetected = true;
+    scribbleHoldTimer = setTimeout(() => {
+      if (isDrawing && currentStroke && scribbleDetected) {
+        eraseScribbledStrokes(currentStroke.points);
+        currentStroke = null;
+        isDrawing = false;
+        redrawStrokes();
+        if (typeof UI !== 'undefined') UI.showToast('⚡ Scribble erased!');
+        if (navigator.vibrate) navigator.vibrate(30);
+      }
+      hideHoldIndicator('scribble');
+      scribbleDetected = false;
+    }, SCRIBBLE_HOLD_DURATION);
+    showHoldIndicator(pos, 'scribble', SCRIBBLE_HOLD_DURATION);
+  }
+
+  function showHoldIndicator(pos, type, duration) {
+    const id = type === 'shape' ? 'shapeHoldIndicator' : 'scribbleHoldIndicator';
+    const color = type === 'shape' ? 'var(--accent)' : '#ff453a';
+    let indicator = document.getElementById(id);
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = id;
+      indicator.style.cssText = `position:absolute;width:44px;height:44px;border:3px solid ${color};border-radius:50%;pointer-events:none;z-index:100;border-top-color:transparent;box-shadow:0 0 16px ${color === 'var(--accent)' ? 'rgba(255,149,0,0.4)' : 'rgba(255,69,58,0.4)'};`;
+      document.getElementById('canvasWrap')?.appendChild(indicator);
+    }
+    if (!document.getElementById('holdIndicatorStyle')) {
+      const style = document.createElement('style');
+      style.id = 'holdIndicatorStyle';
+      style.textContent = `@keyframes hold-spin{0%{transform:translate(-50%,-50%) scale(0.5) rotate(0deg);opacity:0.6}100%{transform:translate(-50%,-50%) scale(1.3) rotate(720deg);opacity:1}}`;
+      document.head.appendChild(style);
+    }
+    indicator.style.left = pos.x + 'px';
+    indicator.style.top = pos.y + 'px';
+    indicator.style.display = 'block';
+    indicator.style.animation = 'none';
+    void indicator.offsetWidth;
+    indicator.style.animation = `hold-spin ${duration}ms linear`;
+  }
+
+  function hideHoldIndicator(type) {
+    const id = type === 'shape' ? 'shapeHoldIndicator' : 'scribbleHoldIndicator';
+    const indicator = document.getElementById(id);
+    if (indicator) indicator.style.display = 'none';
+  }
+
+  function showShapeSnapEffect(shape) {
+    const wrap = document.getElementById('canvasWrap');
+    if (!wrap) return;
+    const flash = document.createElement('div');
+    flash.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:14px 28px;background:rgba(255,149,0,0.95);color:white;font-size:22px;font-weight:800;border-radius:24px;z-index:200;pointer-events:none;animation:shapeFlash 0.9s ease-out forwards;box-shadow:0 8px 32px rgba(255,149,0,0.5);`;
+    flash.textContent = `✨ ${shape.type}`;
+    wrap.appendChild(flash);
+    if (!document.getElementById('shapeFlashStyle')) {
+      const style = document.createElement('style');
+      style.id = 'shapeFlashStyle';
+      style.textContent = `@keyframes shapeFlash{0%{transform:translate(-50%,-50%) scale(0.5);opacity:0}40%{transform:translate(-50%,-50%) scale(1.15);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:0}}`;
+      document.head.appendChild(style);
+    }
+    setTimeout(() => flash.remove(), 900);
+  }
+
+  // ========== POINTER EVENTS ==========
+  function onPointerDown(e) {
+    if (currentTool === 'select' || currentTool === 'lasso') return;
+    if (!shouldAcceptInput(e)) return;
+    if (e.pointerType === 'touch' && activeTouches.size > 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (menuOpen) closePenSettings();
+    try { drawingCanvas.setPointerCapture(e.pointerId); } catch (err) {}
+
+    isDrawing = true;
+    const pos = getPos(e);
+    lastPoint = pos;
+    clearAllTimers();
+    shapeHoldTriggered = false;
+    shapeHoldPosition = null;
+    scribbleDetected = false;
+    scribbleHoldPos = null;
+
+    currentStroke = {
+      tool: currentTool,
+      color: penColor,
+      size: penSize,
+      opacity: penOpacity,
+      style: currentTool === 'pen' ? penStyle : 'solid',
+      points: [pos]
+    };
+
+    // Full redraw shows the initial dot immediately
+    redrawStrokes();
+  }
+
+  function onPointerMove(e) {
+    if (!isDrawing) return;
+    if (!shouldAcceptInput(e)) return;
+    if (activeTouches.size > 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+
+    for (const evt of events) {
+      const pos = getPos(evt);
+      if (!currentStroke) return;
+      currentStroke.points.push(pos);
+
+      // ===== SCRIBBLE DETECTION =====
+      if (scribbleEraseEnabled && currentTool !== 'eraser' && currentTool !== 'highlighter') {
+        if (!scribbleDetected && currentStroke.points.length > 25) {
+          if (isScribblePattern(currentStroke.points)) {
+            startScribbleHoldTimer(pos);
+          }
+        } else if (scribbleDetected && scribbleHoldPos) {
+          const dx = pos.x - scribbleHoldPos.x;
+          const dy = pos.y - scribbleHoldPos.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance > 30) {
+            if (isScribblePattern(currentStroke.points.slice(-20))) {
+              startScribbleHoldTimer(pos);
+            } else {
+              clearScribbleHoldTimer();
+            }
+          }
+        }
+      }
+
+      // ===== HOLD-TO-SHAPE =====
+      if (!scribbleDetected && currentTool === 'pen' && penStyle === 'solid' &&
+        currentStroke.points.length > 8) {
+        if (shapeHoldPosition) {
+          const dx = pos.x - shapeHoldPosition.x;
+          const dy = pos.y - shapeHoldPosition.y;
+          if (Math.sqrt(dx * dx + dy * dy) > SHAPE_HOLD_MOVEMENT_THRESHOLD) {
+            startShapeHoldTimer(pos);
+          }
+        } else {
+          startShapeHoldTimer(pos);
+        }
+      }
+
+      if (currentTool === 'eraser') {
+        eraseAt(pos.x, pos.y, penSize * 4);
+      } else {
+        // Always full redraw - guarantees currentStroke is always visible
+        redrawStrokes();
+      }
+
+      lastPoint = pos;
+    }
+  }
+
+  function onPointerUp(e) {
+    clearAllTimers();
+    if (!isDrawing) return;
+    isDrawing = false;
+    lastPoint = null;
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.setLineDash([]);
+    try { if (e && e.pointerId) drawingCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
+
+    if (currentStroke && currentStroke.points.length > 0) {
+      // Auto shape recognition
+      if (!shapeHoldTriggered && shapeRecognitionEnabled && currentTool === 'pen' && currentStroke.points.length > 8) {
+        const shape = detectShape(currentStroke.points);
+        if (shape) {
+          currentStroke.points = generateShapePoints(shape);
+          currentStroke.recognizedShape = shape.type;
+          currentStroke.style = 'solid';
+          if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type}`);
+        }
+      }
+
+      // Beautify
+      if (beautifyEnabled && currentTool === 'pen' && !currentStroke.recognizedShape && currentStroke.style === 'solid') {
+        currentStroke = beautifyStroke(currentStroke);
+      }
+
+      strokes.push(currentStroke);
+      redoStack = [];
+    }
+
+    // Null first, then redraw so it's cleanly committed
+    currentStroke = null;
+    shapeHoldTriggered = false;
+    redrawStrokes();
+  }
+
+  // ========== REDRAW - Always includes currentStroke ==========
+  function redrawStrokes() {
+    if (!ctx) return;
+    const w = drawingCanvas.width / dpr;
+    const h = drawingCanvas.height / dpr;
+    ctx.clearRect(0, 0, w, h);
+
+    // All committed strokes
+    strokes.forEach(stroke => renderStroke(stroke));
+
+    // Current in-progress stroke - always render so it's never lost
+    if (currentStroke && currentStroke.points.length > 0) {
+      renderStroke(currentStroke);
+    }
+  }
+
+  // ========== STROKE RENDERING ==========
+  function renderStroke(stroke) {
+    if (!stroke || !stroke.points || stroke.points.length < 1) return;
+
+    const isHighlighter = stroke.tool === 'highlighter';
+    ctx.globalAlpha = isHighlighter ? 0.3 : (stroke.opacity || 1);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = stroke.color;
+    ctx.fillStyle = stroke.color;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+
+    // Single dot
+    if (stroke.points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(stroke.points[0].x, stroke.points[0].y, stroke.size / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    const style = stroke.style || 'solid';
+    switch (style) {
+      case 'solid':  renderSolid(stroke);  break;
+      case 'dashed': renderDashed(stroke); break;
+      case 'dotted': renderDotted(stroke); break;
+      case 'double': renderDouble(stroke); break;
+      case 'curly':  renderWavy(stroke);   break;
+      case 'zigzag': renderZigzag(stroke); break;
+      default:       renderSolid(stroke);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+  }
+
+  function renderSolid(stroke) {
+    const pts = stroke.points;
+    const isHighlighter = stroke.tool === 'highlighter';
+    if (pts.length < 2) return;
+
+    if (stroke.tool === 'pen' && !isHighlighter) {
+      // Pressure-sensitive smooth rendering
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1];
+        const p1 = pts[i];
+        const width = stroke.size * (0.6 + (p1.pressure || 0.5) * 0.6);
+        ctx.lineWidth = width;
+
+        if (i === 1) {
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          if (pts.length > 2) {
+            const m = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
+            ctx.lineTo(m.x, m.y);
+          } else {
+            ctx.lineTo(p1.x, p1.y);
+          }
+          ctx.stroke();
+        } else if (i < pts.length - 1) {
+          const pPrev = pts[i - 2];
+          const m1 = { x: (pPrev.x + p0.x) / 2, y: (pPrev.y + p0.y) / 2 };
+          const m2 = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
+          ctx.beginPath();
+          ctx.moveTo(m1.x, m1.y);
+          ctx.quadraticCurveTo(p0.x, p0.y, m2.x, m2.y);
+          ctx.stroke();
+        } else {
+          const pPrev = pts[i - 2];
+          const m1 = { x: (pPrev.x + p0.x) / 2, y: (pPrev.y + p0.y) / 2 };
+          ctx.beginPath();
+          ctx.moveTo(m1.x, m1.y);
+          ctx.quadraticCurveTo(p0.x, p0.y, p1.x, p1.y);
+          ctx.stroke();
+        }
+      }
+    } else {
+      // Highlighter / other - simple smooth curve
+      ctx.lineWidth = stroke.size;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i + 1].x) / 2;
+        const my = (pts[i].y + pts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      ctx.stroke();
+    }
+  }
+
+  function renderDashed(stroke) {
+    const pts = stroke.points;
+    ctx.lineWidth = stroke.size;
+    ctx.setLineDash([stroke.size * 3, stroke.size * 2]);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2;
+      const my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function renderDotted(stroke) {
+    const pts = stroke.points;
+    const spacing = stroke.size * 2.5;
+    ctx.beginPath();
+    ctx.arc(pts[0].x, pts[0].y, stroke.size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    let lastX = pts[0].x, lastY = pts[0].y;
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - lastX;
+      const dy = pts[i].y - lastY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist >= spacing) {
+        ctx.beginPath();
+        ctx.arc(pts[i].x, pts[i].y, stroke.size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        lastX = pts[i].x;
+        lastY = pts[i].y;
+      }
+    }
+  }
+
+  function renderDouble(stroke) {
+    const pts = stroke.points;
+    const offset = stroke.size * 0.9;
+    ctx.lineWidth = Math.max(1, stroke.size / 3);
+    const upper = [], lower = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      let angle;
+      if (i === 0) angle = Math.atan2(pts[1].y - p.y, pts[1].x - p.x);
+      else if (i === pts.length - 1) angle = Math.atan2(p.y - pts[i - 1].y, p.x - pts[i - 1].x);
+      else angle = Math.atan2(pts[i + 1].y - pts[i - 1].y, pts[i + 1].x - pts[i - 1].x);
+      const px = Math.cos(angle + Math.PI / 2) * offset;
+      const py = Math.sin(angle + Math.PI / 2) * offset;
+      upper.push({ x: p.x + px, y: p.y + py });
+      lower.push({ x: p.x - px, y: p.y - py });
+    }
+    [upper, lower].forEach(path => {
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length - 1; i++) {
+        const mx = (path[i].x + path[i + 1].x) / 2;
+        const my = (path[i].y + path[i + 1].y) / 2;
+        ctx.quadraticCurveTo(path[i].x, path[i].y, mx, my);
+      }
+      ctx.lineTo(path[path.length - 1].x, path[path.length - 1].y);
+      ctx.stroke();
+    });
+  }
+
+  function renderWavy(stroke) {
+    const pts = stroke.points;
+    const amplitude = stroke.size * 1.8;
+    const frequency = stroke.size * 3.5;
+    ctx.lineWidth = stroke.size;
+    const cumDist = [0];
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - pts[i - 1].x;
+      const dy = pts[i].y - pts[i - 1].y;
+      cumDist.push(cumDist[i - 1] + Math.sqrt(dx * dx + dy * dy));
+    }
+    const totalDist = cumDist[cumDist.length - 1];
+    if (totalDist < 5) return;
+    const numSteps = Math.max(30, Math.floor(totalDist / 2));
+    ctx.beginPath();
+    for (let step = 0; step <= numSteps; step++) {
+      const targetDist = (step / numSteps) * totalDist;
+      let segIdx = 1;
+      while (segIdx < cumDist.length && cumDist[segIdx] < targetDist) segIdx++;
+      if (segIdx >= pts.length) segIdx = pts.length - 1;
+      const p1 = pts[segIdx - 1];
+      const p2 = pts[segIdx];
+      const segLen = cumDist[segIdx] - cumDist[segIdx - 1];
+      const localT = segLen > 0 ? (targetDist - cumDist[segIdx - 1]) / segLen : 0;
+      const x = p1.x + (p2.x - p1.x) * localT;
+      const y = p1.y + (p2.y - p1.y) * localT;
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      const waveOffset = Math.sin((targetDist / frequency) * Math.PI * 2) * amplitude;
+      const wx = x + Math.cos(angle + Math.PI / 2) * waveOffset;
+      const wy = y + Math.sin(angle + Math.PI / 2) * waveOffset;
+      if (step === 0) ctx.moveTo(wx, wy);
+      else ctx.lineTo(wx, wy);
+    }
+    ctx.stroke();
+  }
+
+  function renderZigzag(stroke) {
+    const pts = stroke.points;
+    const amplitude = stroke.size * 1.5;
+    const spacing = stroke.size * 1.8;
+    ctx.lineWidth = stroke.size;
+    const cumDist = [0];
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - pts[i - 1].x;
+      const dy = pts[i].y - pts[i - 1].y;
+      cumDist.push(cumDist[i - 1] + Math.sqrt(dx * dx + dy * dy));
+    }
+    const totalDist = cumDist[cumDist.length - 1];
+    if (totalDist < 5) return;
+    const numPeaks = Math.max(3, Math.floor(totalDist / spacing));
+    ctx.beginPath();
+    for (let step = 0; step <= numPeaks; step++) {
+      const targetDist = (step / numPeaks) * totalDist;
+      let segIdx = 1;
+      while (segIdx < cumDist.length && cumDist[segIdx] < targetDist) segIdx++;
+      if (segIdx >= pts.length) segIdx = pts.length - 1;
+      const p1 = pts[segIdx - 1];
+      const p2 = pts[segIdx];
+      const segLen = cumDist[segIdx] - cumDist[segIdx - 1];
+      const localT = segLen > 0 ? (targetDist - cumDist[segIdx - 1]) / segLen : 0;
+      const x = p1.x + (p2.x - p1.x) * localT;
+      const y = p1.y + (p2.y - p1.y) * localT;
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      const zigOffset = (step % 2 === 0 ? 1 : -1) * amplitude;
+      const zx = x + Math.cos(angle + Math.PI / 2) * zigOffset;
+      const zy = y + Math.sin(angle + Math.PI / 2) * zigOffset;
+      if (step === 0) ctx.moveTo(zx, zy);
+      else ctx.lineTo(zx, zy);
+    }
+    ctx.stroke();
+  }
+
+  // ========== SCRIBBLE DETECTION ==========
+  function isScribblePattern(points) {
+    if (points.length < 20) return false;
+    const recent = points.slice(-Math.min(30, points.length));
+    let directionChanges = 0;
+    let lastDx = 0, lastDy = 0;
+    let significantChanges = 0;
+
+    for (let i = 1; i < recent.length; i++) {
+      const dx = recent[i].x - recent[i - 1].x;
+      const dy = recent[i].y - recent[i - 1].y;
+      const mag = Math.sqrt(dx * dx + dy * dy);
+      if (i > 1 && mag > 1) {
+        const dotProduct = dx * lastDx + dy * lastDy;
+        const magPrev = Math.sqrt(lastDx * lastDx + lastDy * lastDy);
+        if (dotProduct < 0) directionChanges++;
+        if (magPrev > 0) {
+          const cosAngle = dotProduct / (mag * magPrev);
+          if (cosAngle < -0.3) significantChanges++;
+        }
+      }
+      lastDx = dx;
+      lastDy = dy;
+    }
+
+    const xs = recent.map(p => p.x);
+    const ys = recent.map(p => p.y);
+    const width = Math.max(...xs) - Math.min(...xs);
+    const height = Math.max(...ys) - Math.min(...ys);
+    let pathLength = 0;
+    for (let i = 1; i < recent.length; i++) {
+      const dx = recent[i].x - recent[i - 1].x;
+      const dy = recent[i].y - recent[i - 1].y;
+      pathLength += Math.sqrt(dx * dx + dy * dy);
+    }
+    const boxDiagonal = Math.sqrt(width * width + height * height);
+    if (boxDiagonal < 20) return false;
+    const compactness = pathLength / boxDiagonal;
+    return significantChanges >= 4 && compactness > 3 && directionChanges >= 5;
+  }
+
+  function eraseScribbledStrokes(scribblePoints) {
+    const xs = scribblePoints.map(p => p.x);
+    const ys = scribblePoints.map(p => p.y);
+    const minX = Math.min(...xs) - 20;
+    const maxX = Math.max(...xs) + 20;
+    const minY = Math.min(...ys) - 20;
+    const maxY = Math.max(...ys) + 20;
+    strokes = strokes.filter(stroke =>
+      !stroke.points.some(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
+    );
+  }
+
+  // ========== BEAUTIFY ==========
+  function beautifyStroke(stroke) {
+    if (!stroke.points || stroke.points.length < 3) return stroke;
+    const simplified = simplifyPoints(stroke.points, 1.5);
+    let smoothed = chaikinSmooth(simplified);
+    smoothed = chaikinSmooth(smoothed);
+    smoothed = smoothPressure(smoothed);
+    return { ...stroke, points: smoothed, beautified: true };
+  }
+
+  function simplifyPoints(points, tolerance) {
+    if (points.length < 3) return points;
+    const result = [points[0]];
+    for (let i = 1; i < points.length - 1; i++) {
+      const prev = result[result.length - 1];
+      const curr = points[i];
+      const dist = Math.sqrt(Math.pow(curr.x - prev.x, 2) + Math.pow(curr.y - prev.y, 2));
+      if (dist >= tolerance) result.push(curr);
+    }
+    result.push(points[points.length - 1]);
+    return result;
+  }
+
+  function chaikinSmooth(points) {
+    if (points.length < 3) return points;
+    const result = [points[0]];
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i], p1 = points[i + 1];
+      result.push({
+        x: 0.75 * p0.x + 0.25 * p1.x,
+        y: 0.75 * p0.y + 0.25 * p1.y,
+        pressure: 0.75 * (p0.pressure || 0.5) + 0.25 * (p1.pressure || 0.5)
+      });
+      result.push({
+        x: 0.25 * p0.x + 0.75 * p1.x,
+        y: 0.25 * p0.y + 0.75 * p1.y,
+        pressure: 0.25 * (p0.pressure || 0.5) + 0.75 * (p1.pressure || 0.5)
+      });
+    }
+    result.push(points[points.length - 1]);
+    return result;
+  }
+
+  function smoothPressure(points) {
+    if (points.length < 5) return points;
+    const windowSize = 5;
+    const smoothed = points.map(p => ({ ...p }));
+    for (let i = windowSize; i < points.length - windowSize; i++) {
+      let sum = 0;
+      for (let j = i - windowSize; j <= i + windowSize; j++) sum += points[j].pressure || 0.5;
+      smoothed[i].pressure = sum / (windowSize * 2 + 1);
+    }
+    return smoothed;
+  }
+
+  // ========== SHAPE RECOGNITION ==========
+  function detectShape(points) {
+    if (points.length < 8) return null;
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const width = maxX - minX, height = maxY - minY;
+
+    if (width < 25 || height < 25) {
+      if (isStraightLine(points)) return { type: 'Line', start: points[0], end: points[points.length - 1] };
+      return null;
+    }
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const first = points[0];
+    const last = points[points.length - 1];
+    const closeDistance = Math.sqrt(Math.pow(last.x - first.x, 2) + Math.pow(last.y - first.y, 2));
+    const maxDim = Math.max(width, height);
+    const isClosed = closeDistance < maxDim * 0.35;
+
+    if (isStraightLine(points)) return { type: 'Line', start: first, end: last };
+
+    if (!isClosed && points.length > 15 && calculateStraightness(points) > 0.82) {
+      return { type: 'Arrow', start: first, end: last };
+    }
+
+    if (isClosed) {
+      const aspectRatio = width / height;
+      const distances = points.map(p =>
+        Math.sqrt(Math.pow(p.x - centerX, 2) + Math.pow(p.y - centerY, 2))
+      );
+      const avgDist = distances.reduce((a, b) => a + b, 0) / distances.length;
+      const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgDist, 2), 0) / distances.length;
+      const cv = Math.sqrt(variance) / avgDist;
+
+      if (cv < 0.18) {
+        return {
+          type: aspectRatio > 0.85 && aspectRatio < 1.18 ? 'Circle' : 'Ellipse',
+          centerX, centerY, radiusX: width / 2, radiusY: height / 2
+        };
+      }
+
+      const corners = countCorners(points);
+      if (corners === 3) return { type: 'Triangle', vertices: findTriangleVertices(points) };
+
+      if (corners === 4) {
+        let rectScore = 0;
+        points.forEach(p => {
+          const nearEdge =
+            Math.abs(p.x - minX) < width * 0.12 ||
+            Math.abs(p.x - maxX) < width * 0.12 ||
+            Math.abs(p.y - minY) < height * 0.12 ||
+            Math.abs(p.y - maxY) < height * 0.12;
+          if (nearEdge) rectScore++;
+        });
+        if (rectScore / points.length > 0.5) {
+          return {
+            type: aspectRatio > 0.85 && aspectRatio < 1.18 ? 'Square' : 'Rectangle',
+            minX, minY, maxX, maxY
+          };
+        }
+      }
+
+      if (corners === 5) return { type: 'Pentagon', vertices: findPolygonVertices(points, 5) };
+      if (corners === 6) return { type: 'Hexagon', vertices: findPolygonVertices(points, 6) };
+
+      if (corners >= 8 && corners <= 12) {
+        const starInfo = detectStar(points, centerX, centerY);
+        if (starInfo) return starInfo;
+      }
+
+      if (cv < 0.28) {
+        return {
+          type: aspectRatio > 0.85 && aspectRatio < 1.18 ? 'Circle' : 'Ellipse',
+          centerX, centerY, radiusX: width / 2, radiusY: height / 2
+        };
+      }
+    }
+    return null;
+  }
+
+  function detectStar(points, cx, cy) {
+    const distances = points.map(p => Math.sqrt(Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2)));
+    const avg = distances.reduce((a, b) => a + b, 0) / distances.length;
+    let peaks = 0;
+    for (let i = 2; i < distances.length - 2; i++) {
+      if (distances[i] > avg * 1.15 && distances[i] > distances[i - 2] && distances[i] > distances[i + 2]) peaks++;
+    }
+    if (peaks >= 4 && peaks <= 6) {
+      return {
+        type: 'Star', centerX: cx, centerY: cy,
+        outerRadius: Math.max(...distances),
+        innerRadius: Math.min(...distances),
+        points: peaks
+      };
+    }
+    return null;
+  }
+
+  function findTriangleVertices(points) {
+    const ys = points.map(p => p.y);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    let top = points[0], bottomLeft = points[0], bottomRight = points[0];
+    points.forEach(p => {
+      if (p.y < top.y) top = p;
+      if (p.y > minY + (maxY - minY) * 0.7) {
+        if (p.x < bottomLeft.x) bottomLeft = p;
+        if (p.x > bottomRight.x) bottomRight = p;
+      }
+    });
+    return [top, bottomRight, bottomLeft];
+  }
+
+  function findPolygonVertices(points, n) {
+    const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+    const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+    const maxR = Math.max(...points.map(p => Math.sqrt(Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2))));
+    const vertices = [];
+    for (let i = 0; i < n; i++) {
+      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+      vertices.push({ x: cx + Math.cos(angle) * maxR, y: cy + Math.sin(angle) * maxR });
+    }
+    return vertices;
+  }
+
+  function isStraightLine(points) {
+    if (points.length < 3) return false;
+    return calculateStraightness(points) > 0.96;
+  }
+
+  function calculateStraightness(points) {
+    const first = points[0], last = points[points.length - 1];
+    const totalDist = Math.sqrt(Math.pow(last.x - first.x, 2) + Math.pow(last.y - first.y, 2));
+    let pathLen = 0;
+    for (let i = 1; i < points.length; i++) {
+      pathLen += Math.sqrt(Math.pow(points[i].x - points[i - 1].x, 2) + Math.pow(points[i].y - points[i - 1].y, 2));
+    }
+    return pathLen > 0 ? totalDist / pathLen : 0;
+  }
+
+  function countCorners(points) {
+    const simplified = simplifyPoints(points, 3);
+    let corners = 0;
+    for (let i = 2; i < simplified.length - 2; i++) {
+      const p1 = simplified[i - 2];
+      const p2 = simplified[i];
+      const p3 = simplified[i + 2];
+      const angle1 = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      const angle2 = Math.atan2(p3.y - p2.y, p3.x - p2.x);
+      let diff = Math.abs(angle2 - angle1);
+      if (diff > Math.PI) diff = 2 * Math.PI - diff;
+      if (diff > Math.PI / 4) corners++;
+    }
+    if (corners <= 3) return 3;
+    if (corners <= 4) return 4;
+    if (corners <= 5) return 5;
+    if (corners <= 6) return 6;
+    return corners;
+  }
+
+  function generateShapePoints(shape) {
+    const pts = [];
+    switch (shape.type) {
+      case 'Circle':
+      case 'Ellipse':
+        for (let i = 0; i <= 80; i++) {
+          const a = (i / 80) * Math.PI * 2;
+          pts.push({ x: shape.centerX + Math.cos(a) * shape.radiusX, y: shape.centerY + Math.sin(a) * shape.radiusY, pressure: 0.7 });
+        }
+        break;
+      case 'Rectangle':
+      case 'Square':
+        pts.push({ x: shape.minX, y: shape.minY, pressure: 0.7 });
+        pts.push({ x: shape.maxX, y: shape.minY, pressure: 0.7 });
+        pts.push({ x: shape.maxX, y: shape.maxY, pressure: 0.7 });
+        pts.push({ x: shape.minX, y: shape.maxY, pressure: 0.7 });
+        pts.push({ x: shape.minX, y: shape.minY, pressure: 0.7 });
+        break;
+      case 'Triangle':
+        shape.vertices.forEach(v => pts.push({ x: v.x, y: v.y, pressure: 0.7 }));
+        pts.push({ x: shape.vertices[0].x, y: shape.vertices[0].y, pressure: 0.7 });
+        break;
+      case 'Pentagon':
+      case 'Hexagon':
+        shape.vertices.forEach(v => pts.push({ x: v.x, y: v.y, pressure: 0.7 }));
+        pts.push({ x: shape.vertices[0].x, y: shape.vertices[0].y, pressure: 0.7 });
+        break;
+      case 'Star': {
+        const numPoints = shape.points || 5;
+        for (let i = 0; i <= numPoints * 2; i++) {
+          const angle = (i / (numPoints * 2)) * Math.PI * 2 - Math.PI / 2;
+          const r = i % 2 === 0 ? shape.outerRadius : shape.innerRadius;
+          pts.push({ x: shape.centerX + Math.cos(angle) * r, y: shape.centerY + Math.sin(angle) * r, pressure: 0.7 });
+        }
+        break;
+      }
+      case 'Line':
+        pts.push({ x: shape.start.x, y: shape.start.y, pressure: 0.7 });
+        pts.push({ x: shape.end.x, y: shape.end.y, pressure: 0.7 });
+        break;
+      case 'Arrow': {
+        pts.push({ x: shape.start.x, y: shape.start.y, pressure: 0.7 });
+        pts.push({ x: shape.end.x, y: shape.end.y, pressure: 0.7 });
+        const angle = Math.atan2(shape.end.y - shape.start.y, shape.end.x - shape.start.x);
+        const arrowLen = 20;
+        const arrowAngle = Math.PI / 6;
+        pts.push({ x: shape.end.x - arrowLen * Math.cos(angle - arrowAngle), y: shape.end.y - arrowLen * Math.sin(angle - arrowAngle), pressure: 0.7 });
+        pts.push({ x: shape.end.x, y: shape.end.y, pressure: 0.7 });
+        pts.push({ x: shape.end.x - arrowLen * Math.cos(angle + arrowAngle), y: shape.end.y - arrowLen * Math.sin(angle + arrowAngle), pressure: 0.7 });
+        break;
+      }
+      default: return [];
+    }
+    return pts;
+  }
+
+  // ========== ERASER ==========
+  function eraseAt(x, y, radius) {
+    let hit = false;
+    strokes = strokes.filter(stroke => {
+      const hits = stroke.points.some(p =>
+        Math.sqrt(Math.pow(p.x - x, 2) + Math.pow(p.y - y, 2)) < radius
+      );
+      if (hits) hit = true;
+      return !hits;
+    });
+    if (hit) redrawStrokes();
+  }
+
+  // ========== UNDO / REDO ==========
+  function undo() {
+    if (strokes.length === 0) return;
+    redoStack.push(strokes.pop());
+    redrawStrokes();
+    if (typeof UI !== 'undefined') UI.showToast('↶ Undone');
+  }
+
+  function redo() {
+    if (redoStack.length === 0) return;
+    strokes.push(redoStack.pop());
+    redrawStrokes();
+    if (typeof UI !== 'undefined') UI.showToast('↷ Redone');
+  }
+
+  function clearCanvas() {
+    if (!confirm('Clear drawing?')) return;
+    strokes = [];
     redoStack = [];
-    requestRender();
+    redrawStrokes();
   }
 
+  // ========== BACKGROUND ==========
+  function drawBackground() {
+    if (!bgCtx) return;
+    const w = bgCanvas.width / dpr;
+    const h = bgCanvas.height / dpr;
+    bgCtx.clearRect(0, 0, w, h);
+
+    if (bgType === 'dark') {
+      bgCtx.fillStyle = '#0a0a0a';
+      bgCtx.fillRect(0, 0, w, h);
+    } else if (bgType === 'white') {
+      bgCtx.fillStyle = '#ffffff';
+      bgCtx.fillRect(0, 0, w, h);
+    } else if (bgType === 'cream') {
+      bgCtx.fillStyle = '#fff9e6';
+      bgCtx.fillRect(0, 0, w, h);
+    } else if (bgType === 'lined') {
+      bgCtx.fillStyle = '#0a0a0a';
+      bgCtx.fillRect(0, 0, w, h);
+      bgCtx.strokeStyle = 'rgba(255,255,255,0.1)';
+      bgCtx.lineWidth = 1;
+      for (let y = 32; y < h; y += 32) {
+        bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(w, y); bgCtx.stroke();
+      }
+    } else if (bgType === 'grid') {
+      bgCtx.fillStyle = '#0a0a0a';
+      bgCtx.fillRect(0, 0, w, h);
+      bgCtx.strokeStyle = 'rgba(255,255,255,0.08)';
+      bgCtx.lineWidth = 1;
+      for (let x = 0; x < w; x += 28) {
+        bgCtx.beginPath(); bgCtx.moveTo(x, 0); bgCtx.lineTo(x, h); bgCtx.stroke();
+      }
+      for (let y = 0; y < h; y += 28) {
+        bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(w, y); bgCtx.stroke();
+      }
+    } else if (bgType === 'dotgrid') {
+      bgCtx.fillStyle = '#0a0a0a';
+      bgCtx.fillRect(0, 0, w, h);
+      bgCtx.fillStyle = 'rgba(255,255,255,0.2)';
+      for (let x = 28; x < w; x += 28) {
+        for (let y = 28; y < h; y += 28) {
+          bgCtx.beginPath();
+          bgCtx.arc(x, y, 1.5, 0, Math.PI * 2);
+          bgCtx.fill();
+        }
+      }
+    }
+  }
+
+  // ========== EXPORT ==========
+  function exportImage() {
+    const merged = document.createElement('canvas');
+    merged.width = drawingCanvas.width;
+    merged.height = drawingCanvas.height;
+    const mCtx = merged.getContext('2d');
+    mCtx.drawImage(bgCanvas, 0, 0);
+    mCtx.drawImage(drawingCanvas, 0, 0);
+    const link = document.createElement('a');
+    link.download = 'notemax-page.png';
+    link.href = merged.toDataURL('image/png');
+    link.click();
+  }
+
+  function getThumbnail(width = 150, height = 200) {
+    const thumb = document.createElement('canvas');
+    thumb.width = width;
+    thumb.height = height;
+    const tCtx = thumb.getContext('2d');
+    tCtx.drawImage(bgCanvas, 0, 0, width, height);
+    tCtx.drawImage(drawingCanvas, 0, 0, width, height);
+    return thumb.toDataURL('image/png');
+  }
+
+  // ========== PUBLIC API ==========
+  function getStrokes() { return strokes; }
+  function loadStrokes(s) { strokes = s || []; redoStack = []; redrawStrokes(); }
   function getBgType() { return bgType; }
   function setBgType(type) {
     bgType = type;
     const sel = document.getElementById('canvasBgSelect');
     if (sel) sel.value = type;
-    paintBackground();
+    drawBackground();
   }
 
-  // ==========================================
-  // PUBLIC API
-  // ==========================================
   return {
     init,
     undo,
@@ -1304,7 +1292,7 @@ const Canvas = (() => {
     exportImage,
     getStrokes,
     loadStrokes,
-    drawBackground: paintBackground,
+    drawBackground,
     getThumbnail,
     getBgType,
     setBgType
