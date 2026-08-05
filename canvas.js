@@ -1,10 +1,10 @@
-// ===== CANVAS - FIXED PEN STYLES + All Features =====
+// ===== NoteMax Canvas - Polished Writing Experience =====
 const Canvas = (() => {
   let drawingCanvas, bgCanvas, ctx, bgCtx;
   let isDrawing = false;
   let currentTool = 'pen';
   let penColor = '#ffffff';
-  let penSize = 5;
+  let penSize = 3;
   let penOpacity = 1;
   let penStyle = 'solid';
   let strokes = [];
@@ -20,29 +20,37 @@ const Canvas = (() => {
   let menuOpen = false;
   let dpr = 1;
   
+  // Live scribble detection
   let liveDirectionChanges = 0;
   let liveLastDx = 0, liveLastDy = 0;
   let liveScribbleTriggered = false;
   
+  // Multi-touch
   let activeTouches = new Map();
   let gestureStartTime = 0;
   let lastGestureTime = 0;
   
+  // Hold to replace shape
   let holdTimer = null;
-  let holdStartTime = 0;
   let holdPosition = null;
   let holdTriggered = false;
-  const HOLD_DURATION = 600;
-  const HOLD_MOVEMENT_THRESHOLD = 8;
+  const HOLD_DURATION = 700;
+  const HOLD_MOVEMENT_THRESHOLD = 10;
+  
+  // Rendering optimization
+  let rafId = null;
+  let needsRedraw = false;
 
   function init() {
     drawingCanvas = document.getElementById('drawingCanvas');
     bgCanvas = document.getElementById('bgCanvas');
     if (!drawingCanvas || !bgCanvas) return;
-    ctx = drawingCanvas.getContext('2d');
+    
+    ctx = drawingCanvas.getContext('2d', { desynchronized: true, alpha: true });
     bgCtx = bgCanvas.getContext('2d');
     dpr = window.devicePixelRatio || 1;
     currentTool = 'pen';
+    
     resizeCanvases();
     window.addEventListener('resize', debounce(resizeCanvases, 100));
     window.addEventListener('orientationchange', () => setTimeout(resizeCanvases, 400));
@@ -96,9 +104,23 @@ const Canvas = (() => {
   function handleTouchStart(e) {
     if (!gesturesEnabled) return;
     Array.from(e.touches).forEach(touch => {
-      activeTouches.set(touch.identifier, { startX: touch.clientX, startY: touch.clientY, startTime: Date.now() });
+      activeTouches.set(touch.identifier, {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        startTime: Date.now()
+      });
     });
-    if (e.touches.length >= 2) { gestureStartTime = Date.now(); e.preventDefault(); }
+    if (e.touches.length >= 2) {
+      gestureStartTime = Date.now();
+      // Cancel any drawing in progress
+      if (isDrawing) {
+        isDrawing = false;
+        currentStroke = null;
+        clearHoldTimer();
+        redrawStrokes();
+      }
+      e.preventDefault();
+    }
   }
 
   function handleTouchEnd(e) {
@@ -106,16 +128,17 @@ const Canvas = (() => {
     const endTime = Date.now();
     const gestureDuration = endTime - gestureStartTime;
     const timeSinceLastGesture = endTime - lastGestureTime;
-    if (gestureDuration < 300 && timeSinceLastGesture > 300) {
+    
+    if (gestureDuration < 300 && timeSinceLastGesture > 350) {
       const touchCount = activeTouches.size;
       if (touchCount === 2) {
         lastGestureTime = endTime;
-        performUndo();
+        undo();
         showGestureHint('↶ Undo');
         e.preventDefault();
       } else if (touchCount === 3) {
         lastGestureTime = endTime;
-        performRedo();
+        redo();
         showGestureHint('↷ Redo');
         e.preventDefault();
       }
@@ -123,18 +146,12 @@ const Canvas = (() => {
     Array.from(e.changedTouches).forEach(touch => activeTouches.delete(touch.identifier));
   }
 
-  function performUndo() {
-    if (isDrawing) { isDrawing = false; currentStroke = null; clearHoldTimer(); redrawStrokes(); }
-    undo();
-  }
-  function performRedo() { redo(); }
-
   function showGestureHint(text) {
     const hint = document.getElementById('gestureHint');
     if (!hint) return;
     hint.textContent = text;
     hint.classList.add('show');
-    setTimeout(() => hint.classList.remove('show'), 600);
+    setTimeout(() => hint.classList.remove('show'), 500);
   }
 
   function setupOutsideClick() {
@@ -153,13 +170,18 @@ const Canvas = (() => {
     panel.classList.remove('hidden');
     menuOpen = true;
   }
+
   function closePenSettings() {
     const panel = document.getElementById('penSettings');
     if (!panel) return;
     panel.classList.add('hidden');
     menuOpen = false;
   }
-  function togglePenSettings() { if (menuOpen) closePenSettings(); else openPenSettings(); }
+
+  function togglePenSettings() {
+    if (menuOpen) closePenSettings();
+    else openPenSettings();
+  }
 
   function setupToolbar() {
     document.querySelectorAll('.pen-preset').forEach(btn => {
@@ -186,8 +208,12 @@ const Canvas = (() => {
         document.querySelectorAll('.pen-tool').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentTool = tool;
-        if (tool === 'highlighter') { penColor = '#ffff00'; openPenSettings(); }
-        else closePenSettings();
+        if (tool === 'highlighter') {
+          penColor = '#ffff00';
+          openPenSettings();
+        } else {
+          closePenSettings();
+        }
         updateCursor();
       });
     });
@@ -269,50 +295,35 @@ const Canvas = (() => {
       });
     }
 
-    const scribbleToggle = document.getElementById('scribbleEraseToggle');
-    if (scribbleToggle) {
-      scribbleToggle.addEventListener('change', e => {
-        scribbleEraseEnabled = e.target.checked;
-        if (typeof UI !== 'undefined') UI.showToast(scribbleEraseEnabled ? '⚡ Fast Erase ON' : 'Fast Erase OFF');
-      });
-    }
+    document.getElementById('scribbleEraseToggle')?.addEventListener('change', e => {
+      scribbleEraseEnabled = e.target.checked;
+      if (typeof UI !== 'undefined') UI.showToast(scribbleEraseEnabled ? '⚡ Fast Erase ON' : 'Fast Erase OFF');
+    });
 
-    const shapeToggle = document.getElementById('shapeRecognitionToggle');
-    if (shapeToggle) {
-      shapeToggle.addEventListener('change', e => {
-        shapeRecognitionEnabled = e.target.checked;
-        const btn = document.getElementById('autoShapeBtn');
-        if (btn) btn.classList.toggle('active', shapeRecognitionEnabled);
-      });
-    }
+    document.getElementById('shapeRecognitionToggle')?.addEventListener('change', e => {
+      shapeRecognitionEnabled = e.target.checked;
+      const btn = document.getElementById('autoShapeBtn');
+      if (btn) btn.classList.toggle('active', shapeRecognitionEnabled);
+    });
 
-    const fingerToggle = document.getElementById('fingerDrawToggle');
-    if (fingerToggle) {
-      fingerToggle.addEventListener('change', e => {
-        fingerDrawEnabled = e.target.checked;
-        if (typeof UI !== 'undefined') UI.showToast(fingerDrawEnabled ? '👆 Finger ON' : '✏️ Pencil only');
-      });
-    }
+    document.getElementById('fingerDrawToggle')?.addEventListener('change', e => {
+      fingerDrawEnabled = e.target.checked;
+      if (typeof UI !== 'undefined') UI.showToast(fingerDrawEnabled ? '👆 Finger ON' : '✏️ Pencil only');
+    });
 
-    const beautifyToggle = document.getElementById('beautifyToggle');
-    if (beautifyToggle) {
-      beautifyToggle.addEventListener('change', e => {
-        beautifyEnabled = e.target.checked;
-        if (typeof UI !== 'undefined') UI.showToast(beautifyEnabled ? '✨ Beautify ON' : 'Beautify OFF');
-        if (beautifyEnabled) {
-          strokes = strokes.map(s => beautifyStroke(s));
-          redrawStrokes();
-        }
-      });
-    }
+    document.getElementById('beautifyToggle')?.addEventListener('change', e => {
+      beautifyEnabled = e.target.checked;
+      if (typeof UI !== 'undefined') UI.showToast(beautifyEnabled ? '✨ Beautify ON' : 'Beautify OFF');
+      if (beautifyEnabled) {
+        strokes = strokes.map(s => beautifyStroke(s));
+        redrawStrokes();
+      }
+    });
 
-    const gesturesToggle = document.getElementById('gesturesToggle');
-    if (gesturesToggle) {
-      gesturesToggle.addEventListener('change', e => {
-        gesturesEnabled = e.target.checked;
-        if (typeof UI !== 'undefined') UI.showToast(gesturesEnabled ? '✌️ Gestures ON' : 'Gestures OFF');
-      });
-    }
+    document.getElementById('gesturesToggle')?.addEventListener('change', e => {
+      gesturesEnabled = e.target.checked;
+      if (typeof UI !== 'undefined') UI.showToast(gesturesEnabled ? '✌️ Gestures ON' : 'Gestures OFF');
+    });
 
     document.getElementById('undoBtn')?.addEventListener('click', (e) => { e.stopPropagation(); undo(); });
     document.getElementById('redoBtn')?.addEventListener('click', (e) => { e.stopPropagation(); redo(); });
@@ -334,7 +345,12 @@ const Canvas = (() => {
 
   function getPos(e) {
     const rect = drawingCanvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top, pressure: e.pressure || 0.5 };
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+      pressure: e.pressure || 0.5,
+      t: Date.now()
+    };
   }
 
   function shouldAcceptInput(e) {
@@ -344,7 +360,7 @@ const Canvas = (() => {
     return true;
   }
 
-  // ========== HOLD TO SHAPE ==========
+  // ========== HOLD TO REPLACE SHAPE ==========
   function clearHoldTimer() {
     if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
     hideHoldIndicator();
@@ -352,7 +368,6 @@ const Canvas = (() => {
 
   function startHoldTimer(pos) {
     clearHoldTimer();
-    holdStartTime = Date.now();
     holdPosition = { x: pos.x, y: pos.y };
     holdTriggered = false;
     holdTimer = setTimeout(() => {
@@ -360,9 +375,8 @@ const Canvas = (() => {
         const shape = detectShape(currentStroke.points);
         if (shape) {
           holdTriggered = true;
-          currentStroke.points = generateShapePoints(shape, currentStroke.points);
+          currentStroke.points = generateShapePoints(shape);
           currentStroke.recognizedShape = shape.type;
-          // Force solid style for shapes
           currentStroke.style = 'solid';
           strokes.push(currentStroke);
           redoStack = [];
@@ -372,7 +386,7 @@ const Canvas = (() => {
           redrawStrokes();
           showShapeSnapEffect(shape);
           if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type} snapped!`);
-          if (navigator.vibrate) navigator.vibrate(30);
+          if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
         } else {
           if (typeof UI !== 'undefined') UI.showToast('🤔 No shape detected');
         }
@@ -387,12 +401,12 @@ const Canvas = (() => {
     if (!indicator) {
       indicator = document.createElement('div');
       indicator.id = 'holdIndicator';
-      indicator.style.cssText = `position:absolute;width:40px;height:40px;border:3px solid var(--accent);border-radius:50%;pointer-events:none;z-index:100;border-top-color:transparent;`;
+      indicator.style.cssText = `position:absolute;width:50px;height:50px;border:3px solid var(--accent);border-radius:50%;pointer-events:none;z-index:100;border-top-color:transparent;box-shadow:0 0 20px rgba(255,149,0,0.4);`;
       document.getElementById('canvasWrap')?.appendChild(indicator);
       if (!document.getElementById('holdIndicatorStyle')) {
         const style = document.createElement('style');
         style.id = 'holdIndicatorStyle';
-        style.textContent = `@keyframes spin{0%{transform:translate(-50%,-50%) scale(0.5) rotate(0deg);opacity:0.5}100%{transform:translate(-50%,-50%) scale(1.5) rotate(720deg);opacity:1}}`;
+        style.textContent = `@keyframes hold-spin{0%{transform:translate(-50%,-50%) scale(0.6) rotate(0deg);opacity:0.5}100%{transform:translate(-50%,-50%) scale(1.4) rotate(720deg);opacity:1}}`;
         document.head.appendChild(style);
       }
     }
@@ -401,7 +415,7 @@ const Canvas = (() => {
     indicator.style.display = 'block';
     indicator.style.animation = 'none';
     void indicator.offsetWidth;
-    indicator.style.animation = `spin ${HOLD_DURATION}ms linear`;
+    indicator.style.animation = `hold-spin ${HOLD_DURATION}ms linear`;
   }
 
   function hideHoldIndicator() {
@@ -413,19 +427,19 @@ const Canvas = (() => {
     const wrap = document.getElementById('canvasWrap');
     if (!wrap) return;
     const flash = document.createElement('div');
-    flash.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:12px 24px;background:rgba(255,149,0,0.9);color:white;font-size:20px;font-weight:700;border-radius:20px;z-index:200;pointer-events:none;animation:shapeFlash 0.8s ease-out forwards;`;
+    flash.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:14px 28px;background:rgba(255,149,0,0.95);color:white;font-size:22px;font-weight:800;border-radius:24px;z-index:200;pointer-events:none;animation:shapeFlash 0.9s ease-out forwards;box-shadow:0 8px 32px rgba(255,149,0,0.5);`;
     flash.textContent = `✨ ${shape.type}`;
     wrap.appendChild(flash);
     if (!document.getElementById('shapeFlashStyle')) {
       const style = document.createElement('style');
       style.id = 'shapeFlashStyle';
-      style.textContent = `@keyframes shapeFlash{0%{transform:translate(-50%,-50%) scale(0.5);opacity:0}40%{transform:translate(-50%,-50%) scale(1.2);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:0}}`;
+      style.textContent = `@keyframes shapeFlash{0%{transform:translate(-50%,-50%) scale(0.5);opacity:0}40%{transform:translate(-50%,-50%) scale(1.15);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:0}}`;
       document.head.appendChild(style);
     }
-    setTimeout(() => flash.remove(), 800);
+    setTimeout(() => flash.remove(), 900);
   }
 
-  // ========== DRAWING ==========
+  // ========== POINTER EVENTS ==========
   function onPointerDown(e) {
     if (currentTool === 'select' || currentTool === 'lasso') return;
     if (!shouldAcceptInput(e)) return;
@@ -443,6 +457,7 @@ const Canvas = (() => {
     liveLastDy = 0;
     liveScribbleTriggered = false;
     holdTriggered = false;
+    holdPosition = null;
 
     currentStroke = {
       tool: currentTool,
@@ -452,6 +467,11 @@ const Canvas = (() => {
       style: currentTool === 'pen' ? penStyle : 'solid',
       points: [pos]
     };
+    
+    // Draw initial dot
+    if (currentTool !== 'eraser') {
+      renderStroke(currentStroke);
+    }
   }
 
   function onPointerMove(e) {
@@ -461,51 +481,59 @@ const Canvas = (() => {
     e.preventDefault();
     e.stopPropagation();
 
-    const pos = getPos(e);
-    if (!currentStroke) return;
-    currentStroke.points.push(pos);
+    // Get coalesced events for smoother lines
+    const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    
+    for (const evt of events) {
+      const pos = getPos(evt);
+      if (!currentStroke) return;
+      currentStroke.points.push(pos);
 
-    // Hold to shape (only for solid pen)
-    if (currentTool === 'pen' && penStyle === 'solid' && currentStroke.points.length > 8) {
-      if (holdPosition) {
-        const dx = pos.x - holdPosition.x;
-        const dy = pos.y - holdPosition.y;
-        if (Math.sqrt(dx * dx + dy * dy) > HOLD_MOVEMENT_THRESHOLD) startHoldTimer(pos);
+      // Fast scribble detection
+      if (scribbleEraseEnabled && !liveScribbleTriggered && 
+          currentTool !== 'eraser' && currentTool !== 'highlighter' &&
+          currentStroke.points.length > 10) {
+        const dx = pos.x - lastPoint.x;
+        const dy = pos.y - lastPoint.y;
+        if (dx * liveLastDx + dy * liveLastDy < 0) liveDirectionChanges++;
+        liveLastDx = dx;
+        liveLastDy = dy;
+        if (liveDirectionChanges >= 3 && isLiveScribble(currentStroke.points)) {
+          liveScribbleTriggered = true;
+          clearHoldTimer();
+          eraseScribbledStrokes(currentStroke.points);
+          currentStroke = null;
+          isDrawing = false;
+          redrawStrokes();
+          if (typeof UI !== 'undefined') UI.showToast('⚡ Erased!');
+          if (navigator.vibrate) navigator.vibrate(20);
+          try { drawingCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
+          return;
+        }
+      }
+
+      // Hold-to-shape (only pen with solid style, not while scribbling)
+      if (currentTool === 'pen' && penStyle === 'solid' && 
+          !liveScribbleTriggered && currentStroke.points.length > 8) {
+        if (holdPosition) {
+          const dx = pos.x - holdPosition.x;
+          const dy = pos.y - holdPosition.y;
+          if (Math.sqrt(dx * dx + dy * dy) > HOLD_MOVEMENT_THRESHOLD) {
+            startHoldTimer(pos);
+          }
+        } else {
+          startHoldTimer(pos);
+        }
+      }
+
+      if (currentTool === 'eraser') {
+        eraseAt(pos.x, pos.y, penSize * 4);
       } else {
-        startHoldTimer(pos);
+        // Incremental drawing for smoothness
+        drawIncrementalSegment(currentStroke, currentStroke.points.length - 2);
       }
+      lastPoint = pos;
     }
-
-    // Fast scribble erase
-    if (scribbleEraseEnabled && !liveScribbleTriggered && 
-        currentTool !== 'eraser' && currentTool !== 'highlighter' &&
-        currentStroke.points.length > 12) {
-      const dx = pos.x - lastPoint.x;
-      const dy = pos.y - lastPoint.y;
-      if (dx * liveLastDx + dy * liveLastDy < 0) liveDirectionChanges++;
-      liveLastDx = dx;
-      liveLastDy = dy;
-      if (liveDirectionChanges >= 4 && isLiveScribble(currentStroke.points)) {
-        liveScribbleTriggered = true;
-        clearHoldTimer();
-        eraseScribbledStrokes(currentStroke.points);
-        currentStroke = null;
-        isDrawing = false;
-        redrawStrokes();
-        if (typeof UI !== 'undefined') UI.showToast('⚡ Erased!');
-        try { drawingCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
-        return;
-      }
-    }
-
-    if (currentTool === 'eraser') {
-      eraseAt(pos.x, pos.y, penSize * 3);
-    } else {
-      // Redraw in real-time so styles look correct
-      redrawStrokes();
-      renderStroke(currentStroke);
-    }
-    lastPoint = pos;
   }
 
   function onPointerUp(e) {
@@ -520,342 +548,385 @@ const Canvas = (() => {
     try { if (e && e.pointerId) drawingCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
 
     if (currentStroke && currentStroke.points.length > 0) {
+      // Auto shape recognition (if hold didn't trigger)
       if (!holdTriggered && shapeRecognitionEnabled && currentTool === 'pen' && currentStroke.points.length > 8) {
         const shape = detectShape(currentStroke.points);
         if (shape) {
-          currentStroke.points = generateShapePoints(shape, currentStroke.points);
+          currentStroke.points = generateShapePoints(shape);
           currentStroke.recognizedShape = shape.type;
           currentStroke.style = 'solid';
           if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type}`);
         }
       }
-      if (beautifyEnabled && currentTool !== 'eraser' && !currentStroke.recognizedShape && currentStroke.style === 'solid') {
+      // Beautify (only if not a recognized shape and style is solid)
+      if (beautifyEnabled && currentTool === 'pen' && !currentStroke.recognizedShape && currentStroke.style === 'solid') {
         currentStroke = beautifyStroke(currentStroke);
       }
       strokes.push(currentStroke);
       redoStack = [];
-      redrawStrokes();
+      redrawStrokes(); // Final clean redraw
     }
     currentStroke = null;
     holdTriggered = false;
   }
 
-  // ========== STROKE RENDERING (FIXED PEN STYLES) ==========
+  // ========== INCREMENTAL DRAWING (Smooth real-time) ==========
+  function drawIncrementalSegment(stroke, fromIdx) {
+    if (!ctx || !stroke || fromIdx < 0) return;
+    const pts = stroke.points;
+    if (pts.length < 2 || fromIdx >= pts.length - 1) return;
+    
+    const style = stroke.style || 'solid';
+    
+    // For fancy styles (dashed, dotted, double, wavy, zigzag), full redraw needed
+    if (style !== 'solid') {
+      redrawStrokes();
+      renderStroke(stroke);
+      return;
+    }
+    
+    // For solid style: incremental smooth draw
+    const isHighlighter = stroke.tool === 'highlighter';
+    ctx.globalAlpha = isHighlighter ? 0.3 : (stroke.opacity || 1);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = stroke.color;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+    
+    const p0 = pts[fromIdx];
+    const p1 = pts[fromIdx + 1];
+    
+    // Pressure-sensitive width
+    const width = isHighlighter ? stroke.size : stroke.size * (0.6 + p1.pressure * 0.6);
+    ctx.lineWidth = width;
+    
+    // Smooth curve using quadratic bezier
+    if (fromIdx > 0) {
+      const pPrev = pts[fromIdx - 1];
+      const mx1 = (pPrev.x + p0.x) / 2;
+      const my1 = (pPrev.y + p0.y) / 2;
+      const mx2 = (p0.x + p1.x) / 2;
+      const my2 = (p0.y + p1.y) / 2;
+      
+      ctx.beginPath();
+      ctx.moveTo(mx1, my1);
+      ctx.quadraticCurveTo(p0.x, p0.y, mx2, my2);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+    }
+    
+    ctx.globalAlpha = 1;
+  }
+
+  // ========== STROKE RENDERING ==========
   function renderStroke(stroke) {
     if (!stroke.points || stroke.points.length < 1) return;
     
     const isHighlighter = stroke.tool === 'highlighter';
-    const opacity = isHighlighter ? 0.3 : (stroke.opacity || 1);
-    const style = stroke.style || 'solid';
-    const size = stroke.size;
-    const color = stroke.color;
-    
-    ctx.globalAlpha = opacity;
+    ctx.globalAlpha = isHighlighter ? 0.3 : (stroke.opacity || 1);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
+    ctx.strokeStyle = stroke.color;
+    ctx.fillStyle = stroke.color;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = size;
     ctx.setLineDash([]);
     
     // Single point = dot
     if (stroke.points.length === 1) {
       ctx.beginPath();
-      ctx.arc(stroke.points[0].x, stroke.points[0].y, size / 2, 0, Math.PI * 2);
+      ctx.arc(stroke.points[0].x, stroke.points[0].y, stroke.size / 2, 0, Math.PI * 2);
       ctx.fill();
+      ctx.globalAlpha = 1;
       return;
     }
     
-    // Render based on style
+    const style = stroke.style || 'solid';
     switch (style) {
-      case 'solid':
-        renderSolidStroke(stroke);
-        break;
-      case 'dashed':
-        renderDashedStroke(stroke);
-        break;
-      case 'dotted':
-        renderDottedStroke(stroke);
-        break;
-      case 'double':
-        renderDoubleStroke(stroke);
-        break;
-      case 'curly':
-        renderWavyStroke(stroke);
-        break;
-      case 'zigzag':
-        renderZigzagStroke(stroke);
-        break;
-      default:
-        renderSolidStroke(stroke);
+      case 'solid': renderSolid(stroke); break;
+      case 'dashed': renderDashed(stroke); break;
+      case 'dotted': renderDotted(stroke); break;
+      case 'double': renderDouble(stroke); break;
+      case 'curly': renderWavy(stroke); break;
+      case 'zigzag': renderZigzag(stroke); break;
+      default: renderSolid(stroke);
     }
     
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
   }
 
-  function renderSolidStroke(stroke) {
-    const points = stroke.points;
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length - 1; i++) {
-      const mx = (points[i].x + points[i + 1].x) / 2;
-      const my = (points[i].y + points[i + 1].y) / 2;
-      ctx.quadraticCurveTo(points[i].x, points[i].y, mx, my);
+  function renderSolid(stroke) {
+    const pts = stroke.points;
+    const isHighlighter = stroke.tool === 'highlighter';
+    
+    if (pts.length < 2) return;
+    
+    // Draw with variable width using multiple segments for pressure sensitivity
+    if (stroke.tool === 'pen' && !isHighlighter) {
+      // Multi-segment for pressure sensitivity
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1];
+        const p1 = pts[i];
+        const width = stroke.size * (0.6 + (p1.pressure || 0.5) * 0.6);
+        ctx.lineWidth = width;
+        
+        ctx.beginPath();
+        if (i === 1) {
+          ctx.moveTo(p0.x, p0.y);
+        } else {
+          const pPrev = pts[i - 2];
+          const mx1 = (pPrev.x + p0.x) / 2;
+          const my1 = (pPrev.y + p0.y) / 2;
+          ctx.moveTo(mx1, my1);
+        }
+        
+        if (i < pts.length - 1) {
+          const p2 = pts[i + 1];
+          const mx2 = (p0.x + p1.x) / 2;
+          const my2 = (p0.y + p1.y) / 2;
+          const mx3 = (p1.x + p2.x) / 2;
+          const my3 = (p1.y + p2.y) / 2;
+          ctx.quadraticCurveTo(p0.x, p0.y, mx2, my2);
+        } else {
+          ctx.lineTo(p1.x, p1.y);
+        }
+        ctx.stroke();
+      }
+    } else {
+      // Simple smooth curve for highlighter
+      ctx.lineWidth = stroke.size;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i + 1].x) / 2;
+        const my = (pts[i].y + pts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      ctx.stroke();
     }
-    if (points.length > 1) {
-      const last = points[points.length - 1];
-      ctx.lineTo(last.x, last.y);
-    }
-    ctx.stroke();
   }
 
-  function renderDashedStroke(stroke) {
-    const points = stroke.points;
+  function renderDashed(stroke) {
+    const pts = stroke.points;
     const size = stroke.size;
-    ctx.setLineDash([size * 2.5, size * 2]);
+    ctx.lineWidth = size;
+    ctx.setLineDash([size * 3, size * 2]);
     ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length - 1; i++) {
-      const mx = (points[i].x + points[i + 1].x) / 2;
-      const my = (points[i].y + points[i + 1].y) / 2;
-      ctx.quadraticCurveTo(points[i].x, points[i].y, mx, my);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2;
+      const my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
     }
-    if (points.length > 1) {
-      const last = points[points.length - 1];
-      ctx.lineTo(last.x, last.y);
-    }
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
     ctx.stroke();
     ctx.setLineDash([]);
   }
 
-  function renderDottedStroke(stroke) {
-    const points = stroke.points;
+  function renderDotted(stroke) {
+    const pts = stroke.points;
     const size = stroke.size;
-    const spacing = size * 2;
+    const spacing = size * 2.5;
     
-    // Draw circles along the path
-    let accumulatedDist = 0;
-    let lastDotPoint = { x: points[0].x, y: points[0].y };
-    
-    // Draw first dot
+    // Draw filled circles along the path
     ctx.beginPath();
-    ctx.arc(points[0].x, points[0].y, size / 2, 0, Math.PI * 2);
+    ctx.arc(pts[0].x, pts[0].y, size / 2, 0, Math.PI * 2);
     ctx.fill();
     
-    for (let i = 1; i < points.length; i++) {
-      const dx = points[i].x - lastDotPoint.x;
-      const dy = points[i].y - lastDotPoint.y;
+    let lastDotX = pts[0].x;
+    let lastDotY = pts[0].y;
+    
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - lastDotX;
+      const dy = pts[i].y - lastDotY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      
       if (dist >= spacing) {
         ctx.beginPath();
-        ctx.arc(points[i].x, points[i].y, size / 2, 0, Math.PI * 2);
+        ctx.arc(pts[i].x, pts[i].y, size / 2, 0, Math.PI * 2);
         ctx.fill();
-        lastDotPoint = { x: points[i].x, y: points[i].y };
+        lastDotX = pts[i].x;
+        lastDotY = pts[i].y;
       }
     }
   }
 
-  function renderDoubleStroke(stroke) {
-    const points = stroke.points;
+  function renderDouble(stroke) {
+    const pts = stroke.points;
     const size = stroke.size;
-    const offset = size * 0.8;
-    const thinLine = Math.max(1, size / 3);
+    const offset = size * 0.9;
+    ctx.lineWidth = Math.max(1, size / 3);
     
-    ctx.lineWidth = thinLine;
+    // Compute perpendicular offsets for each point
+    const upper = [];
+    const lower = [];
     
-    // Get smoothed points
-    const smoothPts = [];
-    smoothPts.push(points[0]);
-    for (let i = 1; i < points.length - 1; i++) {
-      smoothPts.push({
-        x: (points[i].x + points[i + 1].x) / 2,
-        y: (points[i].y + points[i + 1].y) / 2
-      });
-    }
-    smoothPts.push(points[points.length - 1]);
-    
-    // Draw both parallel lines
-    const upperPath = [];
-    const lowerPath = [];
-    
-    for (let i = 0; i < smoothPts.length; i++) {
-      const p = smoothPts[i];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
       let angle;
       if (i === 0) {
-        angle = Math.atan2(smoothPts[1].y - p.y, smoothPts[1].x - p.x);
-      } else if (i === smoothPts.length - 1) {
-        angle = Math.atan2(p.y - smoothPts[i-1].y, p.x - smoothPts[i-1].x);
+        angle = Math.atan2(pts[1].y - p.y, pts[1].x - p.x);
+      } else if (i === pts.length - 1) {
+        angle = Math.atan2(p.y - pts[i-1].y, p.x - pts[i-1].x);
       } else {
-        angle = Math.atan2(smoothPts[i+1].y - smoothPts[i-1].y, smoothPts[i+1].x - smoothPts[i-1].x);
+        angle = Math.atan2(pts[i+1].y - pts[i-1].y, pts[i+1].x - pts[i-1].x);
       }
-      
-      const perpX = Math.cos(angle + Math.PI / 2) * offset;
-      const perpY = Math.sin(angle + Math.PI / 2) * offset;
-      
-      upperPath.push({ x: p.x + perpX, y: p.y + perpY });
-      lowerPath.push({ x: p.x - perpX, y: p.y - perpY });
+      const px = Math.cos(angle + Math.PI / 2) * offset;
+      const py = Math.sin(angle + Math.PI / 2) * offset;
+      upper.push({ x: p.x + px, y: p.y + py });
+      lower.push({ x: p.x - px, y: p.y - py });
     }
     
-    // Draw upper line
-    ctx.beginPath();
-    ctx.moveTo(upperPath[0].x, upperPath[0].y);
-    for (let i = 1; i < upperPath.length; i++) {
-      ctx.lineTo(upperPath[i].x, upperPath[i].y);
-    }
-    ctx.stroke();
-    
-    // Draw lower line
-    ctx.beginPath();
-    ctx.moveTo(lowerPath[0].x, lowerPath[0].y);
-    for (let i = 1; i < lowerPath.length; i++) {
-      ctx.lineTo(lowerPath[i].x, lowerPath[i].y);
-    }
-    ctx.stroke();
+    // Draw both lines
+    [upper, lower].forEach(path => {
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length - 1; i++) {
+        const mx = (path[i].x + path[i + 1].x) / 2;
+        const my = (path[i].y + path[i + 1].y) / 2;
+        ctx.quadraticCurveTo(path[i].x, path[i].y, mx, my);
+      }
+      ctx.lineTo(path[path.length - 1].x, path[path.length - 1].y);
+      ctx.stroke();
+    });
   }
 
-  function renderWavyStroke(stroke) {
-    const points = stroke.points;
+  function renderWavy(stroke) {
+    const pts = stroke.points;
     const size = stroke.size;
-    const amplitude = size * 1.5;
-    const frequency = size * 3; // wavelength
+    const amplitude = size * 1.8;
+    const frequency = size * 3.5;
+    ctx.lineWidth = size;
     
-    // Calculate cumulative distance along path
-    const path = [];
-    let cumDist = 0;
-    path.push({ ...points[0], dist: 0 });
-    
-    for (let i = 1; i < points.length; i++) {
-      const dx = points[i].x - points[i-1].x;
-      const dy = points[i].y - points[i-1].y;
-      cumDist += Math.sqrt(dx * dx + dy * dy);
-      path.push({ ...points[i], dist: cumDist });
+    // Build cumulative distance array
+    const cumDist = [0];
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - pts[i-1].x;
+      const dy = pts[i].y - pts[i-1].y;
+      cumDist.push(cumDist[i-1] + Math.sqrt(dx*dx + dy*dy));
     }
     
-    if (cumDist < 5) return;
+    const totalDist = cumDist[cumDist.length - 1];
+    if (totalDist < 5) return;
     
-    // Generate wavy path
-    const numSteps = Math.max(20, Math.floor(cumDist / 2));
+    const numSteps = Math.max(30, Math.floor(totalDist / 2));
     ctx.beginPath();
     
-    let firstPoint = true;
     for (let step = 0; step <= numSteps; step++) {
-      const targetDist = (step / numSteps) * cumDist;
+      const t = step / numSteps;
+      const targetDist = t * totalDist;
       
-      // Find the segment containing this distance
-      let segIdx = 0;
-      for (let i = 1; i < path.length; i++) {
-        if (path[i].dist >= targetDist) { segIdx = i; break; }
-      }
+      // Find segment
+      let segIdx = 1;
+      while (segIdx < cumDist.length && cumDist[segIdx] < targetDist) segIdx++;
+      if (segIdx >= pts.length) segIdx = pts.length - 1;
       
-      const p1 = path[segIdx - 1] || path[0];
-      const p2 = path[segIdx];
-      const segLen = p2.dist - p1.dist;
-      const t = segLen > 0 ? (targetDist - p1.dist) / segLen : 0;
+      const p1 = pts[segIdx - 1];
+      const p2 = pts[segIdx];
+      const segLen = cumDist[segIdx] - cumDist[segIdx - 1];
+      const localT = segLen > 0 ? (targetDist - cumDist[segIdx - 1]) / segLen : 0;
       
-      const x = p1.x + (p2.x - p1.x) * t;
-      const y = p1.y + (p2.y - p1.y) * t;
+      const x = p1.x + (p2.x - p1.x) * localT;
+      const y = p1.y + (p2.y - p1.y) * localT;
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       
       const waveOffset = Math.sin((targetDist / frequency) * Math.PI * 2) * amplitude;
-      const px = x + Math.cos(angle + Math.PI / 2) * waveOffset;
-      const py = y + Math.sin(angle + Math.PI / 2) * waveOffset;
+      const wx = x + Math.cos(angle + Math.PI / 2) * waveOffset;
+      const wy = y + Math.sin(angle + Math.PI / 2) * waveOffset;
       
-      if (firstPoint) { ctx.moveTo(px, py); firstPoint = false; }
-      else ctx.lineTo(px, py);
+      if (step === 0) ctx.moveTo(wx, wy);
+      else ctx.lineTo(wx, wy);
     }
     ctx.stroke();
   }
 
-  function renderZigzagStroke(stroke) {
-    const points = stroke.points;
+  function renderZigzag(stroke) {
+    const pts = stroke.points;
     const size = stroke.size;
     const amplitude = size * 1.5;
-    const frequency = size * 1.5;
+    const spacing = size * 1.8;
+    ctx.lineWidth = size;
     
-    // Calculate cumulative distance along path
-    const path = [];
-    let cumDist = 0;
-    path.push({ ...points[0], dist: 0 });
-    
-    for (let i = 1; i < points.length; i++) {
-      const dx = points[i].x - points[i-1].x;
-      const dy = points[i].y - points[i-1].y;
-      cumDist += Math.sqrt(dx * dx + dy * dy);
-      path.push({ ...points[i], dist: cumDist });
+    const cumDist = [0];
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - pts[i-1].x;
+      const dy = pts[i].y - pts[i-1].y;
+      cumDist.push(cumDist[i-1] + Math.sqrt(dx*dx + dy*dy));
     }
     
-    if (cumDist < 5) return;
+    const totalDist = cumDist[cumDist.length - 1];
+    if (totalDist < 5) return;
     
-    // Generate zigzag path
-    const numZigs = Math.max(4, Math.floor(cumDist / frequency));
-    const numSteps = numZigs * 2;
+    const numPeaks = Math.max(3, Math.floor(totalDist / spacing));
     ctx.beginPath();
     
-    let firstPoint = true;
-    for (let step = 0; step <= numSteps; step++) {
-      const targetDist = (step / numSteps) * cumDist;
+    for (let step = 0; step <= numPeaks; step++) {
+      const t = step / numPeaks;
+      const targetDist = t * totalDist;
       
-      let segIdx = 0;
-      for (let i = 1; i < path.length; i++) {
-        if (path[i].dist >= targetDist) { segIdx = i; break; }
-      }
+      let segIdx = 1;
+      while (segIdx < cumDist.length && cumDist[segIdx] < targetDist) segIdx++;
+      if (segIdx >= pts.length) segIdx = pts.length - 1;
       
-      const p1 = path[segIdx - 1] || path[0];
-      const p2 = path[segIdx];
-      const segLen = p2.dist - p1.dist;
-      const t = segLen > 0 ? (targetDist - p1.dist) / segLen : 0;
+      const p1 = pts[segIdx - 1];
+      const p2 = pts[segIdx];
+      const segLen = cumDist[segIdx] - cumDist[segIdx - 1];
+      const localT = segLen > 0 ? (targetDist - cumDist[segIdx - 1]) / segLen : 0;
       
-      const x = p1.x + (p2.x - p1.x) * t;
-      const y = p1.y + (p2.y - p1.y) * t;
+      const x = p1.x + (p2.x - p1.x) * localT;
+      const y = p1.y + (p2.y - p1.y) * localT;
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       
       const zigOffset = (step % 2 === 0 ? 1 : -1) * amplitude;
-      const px = x + Math.cos(angle + Math.PI / 2) * zigOffset;
-      const py = y + Math.sin(angle + Math.PI / 2) * zigOffset;
+      const zx = x + Math.cos(angle + Math.PI / 2) * zigOffset;
+      const zy = y + Math.sin(angle + Math.PI / 2) * zigOffset;
       
-      if (firstPoint) { ctx.moveTo(px, py); firstPoint = false; }
-      else ctx.lineTo(px, py);
+      if (step === 0) ctx.moveTo(zx, zy);
+      else ctx.lineTo(zx, zy);
     }
     ctx.stroke();
   }
 
   // ========== SCRIBBLE DETECTION ==========
   function isLiveScribble(points) {
-    if (points.length < 12) return false;
-    const recentPoints = points.slice(-Math.min(20, points.length));
+    if (points.length < 10) return false;
+    const recent = points.slice(-Math.min(24, points.length));
     let directionChanges = 0;
     let lastDx = 0, lastDy = 0;
-    for (let i = 1; i < recentPoints.length; i++) {
-      const dx = recentPoints[i].x - recentPoints[i-1].x;
-      const dy = recentPoints[i].y - recentPoints[i-1].y;
-      if (i > 1) { if (dx * lastDx + dy * lastDy < 0) directionChanges++; }
-      lastDx = dx; lastDy = dy;
+    for (let i = 1; i < recent.length; i++) {
+      const dx = recent[i].x - recent[i-1].x;
+      const dy = recent[i].y - recent[i-1].y;
+      if (i > 1 && (dx * lastDx + dy * lastDy) < 0) directionChanges++;
+      lastDx = dx;
+      lastDy = dy;
     }
-    const xs = recentPoints.map(p => p.x);
-    const ys = recentPoints.map(p => p.y);
+    const xs = recent.map(p => p.x);
+    const ys = recent.map(p => p.y);
     const width = Math.max(...xs) - Math.min(...xs);
     const height = Math.max(...ys) - Math.min(...ys);
     let pathLength = 0;
-    for (let i = 1; i < recentPoints.length; i++) {
-      const dx = recentPoints[i].x - recentPoints[i-1].x;
-      const dy = recentPoints[i].y - recentPoints[i-1].y;
-      pathLength += Math.sqrt(dx * dx + dy * dy);
+    for (let i = 1; i < recent.length; i++) {
+      pathLength += Math.sqrt(Math.pow(recent[i].x - recent[i-1].x, 2) + Math.pow(recent[i].y - recent[i-1].y, 2));
     }
     const boxDiagonal = Math.sqrt(width * width + height * height);
     const compactness = boxDiagonal > 0 ? pathLength / boxDiagonal : 0;
-    return directionChanges >= 3 && compactness > 2.5;
+    // Aspect ratio check - scribble is usually wider than tall or vice versa
+    const aspectRatio = width > 0 && height > 0 ? Math.max(width, height) / Math.min(width, height) : 1;
+    return directionChanges >= 3 && compactness > 2.3 && aspectRatio < 6;
   }
 
   function eraseScribbledStrokes(scribblePoints) {
     const xs = scribblePoints.map(p => p.x);
     const ys = scribblePoints.map(p => p.y);
-    const minX = Math.min(...xs) - 15;
-    const maxX = Math.max(...xs) + 15;
-    const minY = Math.min(...ys) - 15;
-    const maxY = Math.max(...ys) + 15;
+    const minX = Math.min(...xs) - 20;
+    const maxX = Math.max(...xs) + 20;
+    const minY = Math.min(...ys) - 20;
+    const maxY = Math.max(...ys) + 20;
     strokes = strokes.filter(stroke => !stroke.points.some(p =>
       p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY));
   }
@@ -915,61 +986,217 @@ const Canvas = (() => {
     return smoothed;
   }
 
-  // ========== SHAPE DETECTION ==========
+  // ========== SHAPE RECOGNITION (Improved) ==========
   function detectShape(points) {
     if (points.length < 8) return null;
+    
     const xs = points.map(p => p.x);
     const ys = points.map(p => p.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     const width = maxX - minX, height = maxY - minY;
-    if (width < 20 || height < 20) return null;
-    const centerX = (minX + maxX) / 2, centerY = (minY + maxY) / 2;
-    const first = points[0], last = points[points.length - 1];
+    
+    if (width < 25 || height < 25) {
+      // Small shapes - only detect lines
+      if (isStraightLine(points)) {
+        return { type: 'Line', start: points[0], end: points[points.length - 1] };
+      }
+      return null;
+    }
+    
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const first = points[0];
+    const last = points[points.length - 1];
     const closeDistance = Math.sqrt(Math.pow(last.x - first.x, 2) + Math.pow(last.y - first.y, 2));
-    const isClosed = closeDistance < Math.max(width, height) * 0.3;
-    if (isStraightLine(points)) return { type: 'Line', start: first, end: last };
+    const maxDim = Math.max(width, height);
+    const isClosed = closeDistance < maxDim * 0.35;
+    
+    // Check for line first
+    if (isStraightLine(points)) {
+      return { type: 'Line', start: first, end: last };
+    }
+    
+    // Arrow detection (line with small change at end)
+    if (!isClosed && points.length > 15) {
+      const straight = calculateStraightness(points);
+      if (straight > 0.8 && straight < 0.98) {
+        // Check if end has a "V" shape (arrowhead)
+        const arrowInfo = detectArrow(points);
+        if (arrowInfo) return arrowInfo;
+      }
+      if (straight > 0.85) {
+        return { type: 'Arrow', start: first, end: last };
+      }
+    }
+    
     if (isClosed) {
-      const aspectRatio = width / height;
-      const avgRadius = (width + height) / 4;
-      let circleScore = 0, rectScore = 0;
+      // Improved circle vs polygon detection
+      const shapeType = classifyClosedShape(points, centerX, centerY, minX, maxX, minY, maxY, width, height);
+      if (shapeType) return shapeType;
+    }
+    
+    return null;
+  }
+
+  function classifyClosedShape(points, cx, cy, minX, maxX, minY, maxY, width, height) {
+    const aspectRatio = width / height;
+    const avgRadius = (width + height) / 4;
+    
+    // Calculate distances from center for each point
+    const distances = points.map(p => Math.sqrt(Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2)));
+    const avgDist = distances.reduce((a, b) => a + b, 0) / distances.length;
+    const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgDist, 2), 0) / distances.length;
+    const stdDev = Math.sqrt(variance);
+    const cv = stdDev / avgDist; // Coefficient of variation
+    
+    // If low variance in distances = circle/ellipse
+    if (cv < 0.15) {
+      if (aspectRatio > 0.85 && aspectRatio < 1.18) {
+        return { type: 'Circle', centerX: cx, centerY: cy, radiusX: width / 2, radiusY: height / 2 };
+      } else {
+        return { type: 'Ellipse', centerX: cx, centerY: cy, radiusX: width / 2, radiusY: height / 2 };
+      }
+    }
+    
+    // Count corners for polygon detection
+    const corners = countCorners(points);
+    
+    // Triangle: 3 corners
+    if (corners === 3) {
+      const trianglePoints = findTriangleVertices(points);
+      if (trianglePoints) return { type: 'Triangle', vertices: trianglePoints };
+    }
+    
+    // Rectangle/Square: 4 corners
+    if (corners === 4) {
+      // Check how well points fit rectangle
+      let rectScore = 0;
       points.forEach(p => {
-        const dist = Math.sqrt(Math.pow(p.x - centerX, 2) + Math.pow(p.y - centerY, 2));
-        if (Math.abs(dist - avgRadius) < avgRadius * 0.25) circleScore++;
-        const nearEdge = Math.abs(p.x - minX) < width * 0.1 || Math.abs(p.x - maxX) < width * 0.1 ||
-                          Math.abs(p.y - minY) < height * 0.1 || Math.abs(p.y - maxY) < height * 0.1;
+        const nearEdge = 
+          Math.abs(p.x - minX) < width * 0.12 ||
+          Math.abs(p.x - maxX) < width * 0.12 ||
+          Math.abs(p.y - minY) < height * 0.12 ||
+          Math.abs(p.y - maxY) < height * 0.12;
         if (nearEdge) rectScore++;
       });
-      const cP = circleScore / points.length;
-      const rP = rectScore / points.length;
-      if (cP > 0.6 && cP > rP) {
+      if (rectScore / points.length > 0.5) {
         return {
-          type: aspectRatio > 0.85 && aspectRatio < 1.15 ? 'Circle' : 'Ellipse',
-          centerX, centerY, radiusX: width / 2, radiusY: height / 2
-        };
-      }
-      if (rP > 0.55) {
-        const corners = detectCorners(points);
-        if (corners === 3) return {
-          type: 'Triangle',
-          top: { x: centerX, y: minY },
-          left: { x: minX, y: maxY },
-          right: { x: maxX, y: maxY }
-        };
-        return {
-          type: aspectRatio > 0.85 && aspectRatio < 1.15 ? 'Square' : 'Rectangle',
+          type: aspectRatio > 0.85 && aspectRatio < 1.18 ? 'Square' : 'Rectangle',
           minX, minY, maxX, maxY
         };
       }
     }
-    if (!isClosed && points.length > 10 && calculateStraightness(points) > 0.85) {
-      return { type: 'Arrow', start: first, end: last };
+    
+    // Pentagon: 5 corners
+    if (corners === 5) {
+      const vertices = findPolygonVertices(points, 5);
+      if (vertices) return { type: 'Pentagon', vertices };
+    }
+    
+    // Hexagon: 6 corners
+    if (corners === 6) {
+      const vertices = findPolygonVertices(points, 6);
+      if (vertices) return { type: 'Hexagon', vertices };
+    }
+    
+    // Star detection (many alternating peaks)
+    if (corners >= 8 && corners <= 12) {
+      const starInfo = detectStar(points, cx, cy);
+      if (starInfo) return starInfo;
+    }
+    
+    // Default to circle if closed and rounded
+    if (cv < 0.25) {
+      return { type: 'Circle', centerX: cx, centerY: cy, radiusX: width / 2, radiusY: height / 2 };
+    }
+    
+    return null;
+  }
+
+  function detectArrow(points) {
+    // Look for arrowhead pattern at the end
+    const n = points.length;
+    if (n < 10) return null;
+    
+    const endPoints = points.slice(-Math.floor(n * 0.3));
+    const start = points[0];
+    const tip = points[Math.floor(n * 0.7)]; // approximate tip location
+    const last = points[n - 1];
+    
+    // Check if the shape has a small triangle at the end
+    const mainDir = Math.atan2(tip.y - start.y, tip.x - start.x);
+    const endDir = Math.atan2(last.y - tip.y, last.x - tip.x);
+    const angleDiff = Math.abs(mainDir - endDir);
+    
+    if (angleDiff > Math.PI / 6 && angleDiff < 5 * Math.PI / 6) {
+      return { type: 'Arrow', start: start, end: last };
     }
     return null;
   }
 
+  function detectStar(points, cx, cy) {
+    // Star has alternating far/near points from center
+    const distances = points.map(p => Math.sqrt(Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2)));
+    const avg = distances.reduce((a, b) => a + b, 0) / distances.length;
+    
+    let peaks = 0;
+    for (let i = 2; i < distances.length - 2; i++) {
+      if (distances[i] > avg * 1.15 && 
+          distances[i] > distances[i-2] && 
+          distances[i] > distances[i+2]) {
+        peaks++;
+      }
+    }
+    
+    if (peaks >= 4 && peaks <= 6) {
+      const maxR = Math.max(...distances);
+      const minR = Math.min(...distances);
+      return { type: 'Star', centerX: cx, centerY: cy, outerRadius: maxR, innerRadius: minR, points: peaks };
+    }
+    return null;
+  }
+
+  function findTriangleVertices(points) {
+    // Find the 3 most extreme points as vertices
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    
+    // Find topmost, bottom-left, bottom-right
+    let top = points[0], bottomLeft = points[0], bottomRight = points[0];
+    points.forEach(p => {
+      if (p.y < top.y) top = p;
+      if (p.y > minY + (maxY - minY) * 0.7) {
+        if (p.x < bottomLeft.x) bottomLeft = p;
+        if (p.x > bottomRight.x) bottomRight = p;
+      }
+    });
+    
+    return [top, bottomRight, bottomLeft];
+  }
+
+  function findPolygonVertices(points, n) {
+    // Divide points into n segments and take extremes
+    const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+    const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+    const maxRadius = Math.max(...points.map(p => Math.sqrt(Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2))));
+    
+    const vertices = [];
+    for (let i = 0; i < n; i++) {
+      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+      vertices.push({
+        x: cx + Math.cos(angle) * maxRadius,
+        y: cy + Math.sin(angle) * maxRadius
+      });
+    }
+    return vertices;
+  }
+
   function isStraightLine(points) {
-    return points.length >= 3 && calculateStraightness(points) > 0.95;
+    if (points.length < 3) return false;
+    return calculateStraightness(points) > 0.96;
   }
 
   function calculateStraightness(points) {
@@ -982,30 +1209,49 @@ const Canvas = (() => {
     return pathLen > 0 ? totalDist / pathLen : 0;
   }
 
-  function detectCorners(points) {
+  function countCorners(points) {
+    // Simplify first
+    const simplified = simplifyPoints(points, 3);
     let corners = 0;
-    const threshold = Math.PI / 3;
-    for (let i = 5; i < points.length - 5; i += 3) {
-      const p1 = points[i - 5], p2 = points[i], p3 = points[i + 5];
+    const threshold = Math.PI / 4; // 45 degrees
+    
+    for (let i = 2; i < simplified.length - 2; i++) {
+      const p1 = simplified[i - 2];
+      const p2 = simplified[i];
+      const p3 = simplified[i + 2];
+      
       const angle1 = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       const angle2 = Math.atan2(p3.y - p2.y, p3.x - p2.x);
       let diff = Math.abs(angle2 - angle1);
       if (diff > Math.PI) diff = 2 * Math.PI - diff;
+      
       if (diff > threshold) corners++;
     }
-    return corners <= 3 ? 3 : 4;
+    
+    // Approximate to nearest polygon count
+    if (corners <= 3) return 3;
+    if (corners <= 4) return 4;
+    if (corners <= 5) return 5;
+    if (corners <= 6) return 6;
+    return corners;
   }
 
-  function generateShapePoints(shape, originalPoints) {
+  function generateShapePoints(shape) {
     const pts = [];
     switch (shape.type) {
-      case 'Circle': case 'Ellipse':
-        for (let i = 0; i <= 60; i++) {
-          const a = (i / 60) * Math.PI * 2;
-          pts.push({ x: shape.centerX + Math.cos(a) * shape.radiusX, y: shape.centerY + Math.sin(a) * shape.radiusY, pressure: 0.7 });
+      case 'Circle':
+      case 'Ellipse':
+        for (let i = 0; i <= 80; i++) {
+          const a = (i / 80) * Math.PI * 2;
+          pts.push({
+            x: shape.centerX + Math.cos(a) * shape.radiusX,
+            y: shape.centerY + Math.sin(a) * shape.radiusY,
+            pressure: 0.7
+          });
         }
         break;
-      case 'Rectangle': case 'Square':
+      case 'Rectangle':
+      case 'Square':
         pts.push({ x: shape.minX, y: shape.minY, pressure: 0.7 });
         pts.push({ x: shape.maxX, y: shape.minY, pressure: 0.7 });
         pts.push({ x: shape.maxX, y: shape.maxY, pressure: 0.7 });
@@ -1013,10 +1259,25 @@ const Canvas = (() => {
         pts.push({ x: shape.minX, y: shape.minY, pressure: 0.7 });
         break;
       case 'Triangle':
-        pts.push({ x: shape.top.x, y: shape.top.y, pressure: 0.7 });
-        pts.push({ x: shape.right.x, y: shape.right.y, pressure: 0.7 });
-        pts.push({ x: shape.left.x, y: shape.left.y, pressure: 0.7 });
-        pts.push({ x: shape.top.x, y: shape.top.y, pressure: 0.7 });
+        shape.vertices.forEach(v => pts.push({ x: v.x, y: v.y, pressure: 0.7 }));
+        pts.push({ x: shape.vertices[0].x, y: shape.vertices[0].y, pressure: 0.7 });
+        break;
+      case 'Pentagon':
+      case 'Hexagon':
+        shape.vertices.forEach(v => pts.push({ x: v.x, y: v.y, pressure: 0.7 }));
+        pts.push({ x: shape.vertices[0].x, y: shape.vertices[0].y, pressure: 0.7 });
+        break;
+      case 'Star':
+        const numPoints = shape.points || 5;
+        for (let i = 0; i <= numPoints * 2; i++) {
+          const angle = (i / (numPoints * 2)) * Math.PI * 2 - Math.PI / 2;
+          const r = i % 2 === 0 ? shape.outerRadius : shape.innerRadius;
+          pts.push({
+            x: shape.centerX + Math.cos(angle) * r,
+            y: shape.centerY + Math.sin(angle) * r,
+            pressure: 0.7
+          });
+        }
         break;
       case 'Line':
         pts.push({ x: shape.start.x, y: shape.start.y, pressure: 0.7 });
@@ -1026,21 +1287,37 @@ const Canvas = (() => {
         pts.push({ x: shape.start.x, y: shape.start.y, pressure: 0.7 });
         pts.push({ x: shape.end.x, y: shape.end.y, pressure: 0.7 });
         const angle = Math.atan2(shape.end.y - shape.start.y, shape.end.x - shape.start.x);
-        const arrowLen = 15;
-        pts.push({ x: shape.end.x - arrowLen * Math.cos(angle - Math.PI / 6), y: shape.end.y - arrowLen * Math.sin(angle - Math.PI / 6), pressure: 0.7 });
+        const arrowLen = 20;
+        const arrowAngle = Math.PI / 6;
+        pts.push({
+          x: shape.end.x - arrowLen * Math.cos(angle - arrowAngle),
+          y: shape.end.y - arrowLen * Math.sin(angle - arrowAngle),
+          pressure: 0.7
+        });
         pts.push({ x: shape.end.x, y: shape.end.y, pressure: 0.7 });
-        pts.push({ x: shape.end.x - arrowLen * Math.cos(angle + Math.PI / 6), y: shape.end.y - arrowLen * Math.sin(angle + Math.PI / 6), pressure: 0.7 });
+        pts.push({
+          x: shape.end.x - arrowLen * Math.cos(angle + arrowAngle),
+          y: shape.end.y - arrowLen * Math.sin(angle + arrowAngle),
+          pressure: 0.7
+        });
         break;
-      default: return originalPoints;
+      default: return [];
     }
     return pts;
   }
 
+  // ========== ERASING ==========
   function eraseAt(x, y, radius) {
-    strokes = strokes.filter(stroke => !stroke.points.some(p => Math.sqrt(Math.pow(p.x - x, 2) + Math.pow(p.y - y, 2)) < radius));
-    redrawStrokes();
+    let hit = false;
+    strokes = strokes.filter(stroke => {
+      const hits = stroke.points.some(p => Math.sqrt(Math.pow(p.x - x, 2) + Math.pow(p.y - y, 2)) < radius);
+      if (hits) hit = true;
+      return !hits;
+    });
+    if (hit) redrawStrokes();
   }
 
+  // ========== UNDO/REDO ==========
   function undo() {
     if (strokes.length === 0) return;
     redoStack.push(strokes.pop());
@@ -1079,20 +1356,42 @@ const Canvas = (() => {
     else if (bgType === 'white') { bgCtx.fillStyle = '#ffffff'; bgCtx.fillRect(0, 0, w, h); }
     else if (bgType === 'cream') { bgCtx.fillStyle = '#fff9e6'; bgCtx.fillRect(0, 0, w, h); }
     else if (bgType === 'lined') {
-      bgCtx.fillStyle = '#0a0a0a'; bgCtx.fillRect(0, 0, w, h);
-      bgCtx.strokeStyle = 'rgba(255,255,255,0.1)'; bgCtx.lineWidth = 1;
-      for (let y = 32; y < h; y += 32) { bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(w, y); bgCtx.stroke(); }
+      bgCtx.fillStyle = '#0a0a0a';
+      bgCtx.fillRect(0, 0, w, h);
+      bgCtx.strokeStyle = 'rgba(255,255,255,0.1)';
+      bgCtx.lineWidth = 1;
+      for (let y = 32; y < h; y += 32) {
+        bgCtx.beginPath();
+        bgCtx.moveTo(0, y);
+        bgCtx.lineTo(w, y);
+        bgCtx.stroke();
+      }
     } else if (bgType === 'grid') {
-      bgCtx.fillStyle = '#0a0a0a'; bgCtx.fillRect(0, 0, w, h);
-      bgCtx.strokeStyle = 'rgba(255,255,255,0.08)'; bgCtx.lineWidth = 1;
-      for (let x = 0; x < w; x += 28) { bgCtx.beginPath(); bgCtx.moveTo(x, 0); bgCtx.lineTo(x, h); bgCtx.stroke(); }
-      for (let y = 0; y < h; y += 28) { bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(w, y); bgCtx.stroke(); }
+      bgCtx.fillStyle = '#0a0a0a';
+      bgCtx.fillRect(0, 0, w, h);
+      bgCtx.strokeStyle = 'rgba(255,255,255,0.08)';
+      bgCtx.lineWidth = 1;
+      for (let x = 0; x < w; x += 28) {
+        bgCtx.beginPath();
+        bgCtx.moveTo(x, 0);
+        bgCtx.lineTo(x, h);
+        bgCtx.stroke();
+      }
+      for (let y = 0; y < h; y += 28) {
+        bgCtx.beginPath();
+        bgCtx.moveTo(0, y);
+        bgCtx.lineTo(w, y);
+        bgCtx.stroke();
+      }
     } else if (bgType === 'dotgrid') {
-      bgCtx.fillStyle = '#0a0a0a'; bgCtx.fillRect(0, 0, w, h);
+      bgCtx.fillStyle = '#0a0a0a';
+      bgCtx.fillRect(0, 0, w, h);
       bgCtx.fillStyle = 'rgba(255,255,255,0.2)';
       for (let x = 28; x < w; x += 28) {
         for (let y = 28; y < h; y += 28) {
-          bgCtx.beginPath(); bgCtx.arc(x, y, 1.5, 0, Math.PI * 2); bgCtx.fill();
+          bgCtx.beginPath();
+          bgCtx.arc(x, y, 1.5, 0, Math.PI * 2);
+          bgCtx.fill();
         }
       }
     }
