@@ -1,4 +1,4 @@
-// ===== CANVAS - Multi-page + Gestures + Pen Styles + Fast Erase =====
+// ===== CANVAS - Hold-to-Shape + All Features =====
 const Canvas = (() => {
   let drawingCanvas, bgCanvas, ctx, bgCtx;
   let isDrawing = false;
@@ -29,6 +29,14 @@ const Canvas = (() => {
   let activeTouches = new Map();
   let gestureStartTime = 0;
   let lastGestureTime = 0;
+  
+  // HOLD-TO-SHAPE detection
+  let holdTimer = null;
+  let holdStartTime = 0;
+  let holdPosition = null;
+  let holdTriggered = false;
+  const HOLD_DURATION = 600; // ms to trigger shape snap
+  const HOLD_MOVEMENT_THRESHOLD = 8; // pixels - must stay still
 
   function init() {
     drawingCanvas = document.getElementById('drawingCanvas');
@@ -48,7 +56,6 @@ const Canvas = (() => {
     drawingCanvas.addEventListener('pointerleave', onPointerUp, { passive: false });
     drawingCanvas.addEventListener('pointercancel', onPointerUp, { passive: false });
     
-    // Multi-touch gestures
     drawingCanvas.addEventListener('touchstart', handleTouchStart, { passive: false });
     drawingCanvas.addEventListener('touchend', handleTouchEnd, { passive: false });
     drawingCanvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
@@ -91,8 +98,6 @@ const Canvas = (() => {
   // ========== MULTI-TOUCH GESTURES ==========
   function handleTouchStart(e) {
     if (!gesturesEnabled) return;
-    
-    // Store all active touches
     Array.from(e.touches).forEach(touch => {
       activeTouches.set(touch.identifier, {
         startX: touch.clientX,
@@ -100,7 +105,6 @@ const Canvas = (() => {
         startTime: Date.now()
       });
     });
-    
     if (e.touches.length >= 2) {
       gestureStartTime = Date.now();
       e.preventDefault();
@@ -109,31 +113,23 @@ const Canvas = (() => {
 
   function handleTouchEnd(e) {
     if (!gesturesEnabled) return;
-    
     const endTime = Date.now();
     const gestureDuration = endTime - gestureStartTime;
     const timeSinceLastGesture = endTime - lastGestureTime;
-    
-    // Only trigger if it was a quick tap (< 300ms) and enough time has passed
     if (gestureDuration < 300 && timeSinceLastGesture > 300) {
       const touchCount = activeTouches.size;
-      
       if (touchCount === 2) {
-        // 2-finger tap = Undo
         lastGestureTime = endTime;
         performUndo();
         showGestureHint('↶ Undo');
         e.preventDefault();
       } else if (touchCount === 3) {
-        // 3-finger tap = Redo
         lastGestureTime = endTime;
         performRedo();
         showGestureHint('↷ Redo');
         e.preventDefault();
       }
     }
-    
-    // Clear ended touches
     Array.from(e.changedTouches).forEach(touch => {
       activeTouches.delete(touch.identifier);
     });
@@ -143,14 +139,13 @@ const Canvas = (() => {
     if (isDrawing) {
       isDrawing = false;
       currentStroke = null;
+      clearHoldTimer();
       redrawStrokes();
     }
     undo();
   }
 
-  function performRedo() {
-    redo();
-  }
+  function performRedo() { redo(); }
 
   function showGestureHint(text) {
     const hint = document.getElementById('gestureHint');
@@ -166,9 +161,7 @@ const Canvas = (() => {
       const panel = document.getElementById('penSettings');
       const clickedInsidePanel = panel && panel.contains(e.target);
       const clickedPenTool = e.target.closest('.pen-preset');
-      if (!clickedInsidePanel && !clickedPenTool) {
-        closePenSettings();
-      }
+      if (!clickedInsidePanel && !clickedPenTool) closePenSettings();
     }, true);
   }
 
@@ -226,7 +219,6 @@ const Canvas = (() => {
       });
     });
 
-    // Thickness quick buttons
     document.querySelectorAll('.thickness-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -241,7 +233,6 @@ const Canvas = (() => {
       });
     });
 
-    // Pen style buttons
     document.querySelectorAll('.pen-style-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -259,7 +250,7 @@ const Canvas = (() => {
         shapeRecognitionEnabled = !shapeRecognitionEnabled;
         autoShape.classList.toggle('active', shapeRecognitionEnabled);
         if (typeof UI !== 'undefined') {
-          UI.showToast(shapeRecognitionEnabled ? '✨ Shape ON' : 'Shape OFF');
+          UI.showToast(shapeRecognitionEnabled ? '✨ Auto Shape ON' : 'Auto Shape OFF');
         }
         const toggle = document.getElementById('shapeRecognitionToggle');
         if (toggle) toggle.checked = shapeRecognitionEnabled;
@@ -392,10 +383,141 @@ const Canvas = (() => {
     return true;
   }
 
+  // ========== HOLD-TO-SHAPE ==========
+  function clearHoldTimer() {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    hideHoldIndicator();
+  }
+
+  function startHoldTimer(pos) {
+    clearHoldTimer();
+    holdStartTime = Date.now();
+    holdPosition = { x: pos.x, y: pos.y };
+    holdTriggered = false;
+    
+    holdTimer = setTimeout(() => {
+      if (isDrawing && currentStroke && currentTool === 'pen' && currentStroke.points.length > 8) {
+        // Try to detect shape
+        const shape = detectShape(currentStroke.points);
+        if (shape) {
+          holdTriggered = true;
+          currentStroke.points = generateShapePoints(shape, currentStroke.points);
+          currentStroke.recognizedShape = shape.type;
+          
+          // Push stroke immediately
+          strokes.push(currentStroke);
+          redoStack = [];
+          currentStroke = null;
+          isDrawing = false;
+          lastPoint = null;
+          
+          redrawStrokes();
+          showShapeSnapEffect(shape);
+          if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type} snapped!`);
+          
+          // Haptic feedback
+          if (navigator.vibrate) navigator.vibrate(30);
+        } else {
+          if (typeof UI !== 'undefined') UI.showToast('🤔 No shape detected');
+        }
+      }
+      hideHoldIndicator();
+    }, HOLD_DURATION);
+    
+    showHoldIndicator(pos);
+  }
+
+  function showHoldIndicator(pos) {
+    let indicator = document.getElementById('holdIndicator');
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = 'holdIndicator';
+      indicator.style.cssText = `
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--accent);
+        border-radius: 50%;
+        pointer-events: none;
+        z-index: 100;
+        transform: translate(-50%, -50%) scale(0);
+        transition: transform ${HOLD_DURATION}ms ease-out;
+        border-top-color: transparent;
+        animation: spin ${HOLD_DURATION}ms linear;
+      `;
+      document.getElementById('canvasWrap')?.appendChild(indicator);
+      
+      // Add spin animation
+      if (!document.getElementById('holdIndicatorStyle')) {
+        const style = document.createElement('style');
+        style.id = 'holdIndicatorStyle';
+        style.textContent = `
+          @keyframes spin {
+            0% { transform: translate(-50%, -50%) scale(0.5) rotate(0deg); opacity: 0.5; }
+            100% { transform: translate(-50%, -50%) scale(1.5) rotate(720deg); opacity: 1; }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    }
+    indicator.style.left = pos.x + 'px';
+    indicator.style.top = pos.y + 'px';
+    indicator.style.display = 'block';
+    indicator.style.animation = 'none';
+    // Force reflow
+    void indicator.offsetWidth;
+    indicator.style.animation = `spin ${HOLD_DURATION}ms linear`;
+  }
+
+  function hideHoldIndicator() {
+    const indicator = document.getElementById('holdIndicator');
+    if (indicator) indicator.style.display = 'none';
+  }
+
+  function showShapeSnapEffect(shape) {
+    const wrap = document.getElementById('canvasWrap');
+    if (!wrap) return;
+    const flash = document.createElement('div');
+    flash.style.cssText = `
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 12px 24px;
+      background: rgba(255,149,0,0.9);
+      color: white;
+      font-size: 20px;
+      font-weight: 700;
+      border-radius: 20px;
+      z-index: 200;
+      pointer-events: none;
+      animation: shapeFlash 0.8s ease-out forwards;
+    `;
+    flash.textContent = `✨ ${shape.type}`;
+    wrap.appendChild(flash);
+    
+    if (!document.getElementById('shapeFlashStyle')) {
+      const style = document.createElement('style');
+      style.id = 'shapeFlashStyle';
+      style.textContent = `
+        @keyframes shapeFlash {
+          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+          40% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+          100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    setTimeout(() => flash.remove(), 800);
+  }
+
   function onPointerDown(e) {
     if (currentTool === 'select' || currentTool === 'lasso') return;
     if (!shouldAcceptInput(e)) return;
-    if (e.pointerType === 'touch' && activeTouches.size > 1) return; // Multi-touch = gesture
+    if (e.pointerType === 'touch' && activeTouches.size > 1) return;
     
     e.preventDefault();
     e.stopPropagation();
@@ -410,6 +532,7 @@ const Canvas = (() => {
     liveLastDx = 0;
     liveLastDy = 0;
     liveScribbleTriggered = false;
+    holdTriggered = false;
 
     currentStroke = {
       tool: currentTool,
@@ -445,19 +568,37 @@ const Canvas = (() => {
     if (!currentStroke) return;
     currentStroke.points.push(pos);
 
+    // ===== HOLD-TO-SHAPE detection =====
+    // Only for pen tool (not highlighter/eraser)
+    if (currentTool === 'pen' && currentStroke.points.length > 8) {
+      if (holdPosition) {
+        // Check if pen has moved significantly
+        const dx = pos.x - holdPosition.x;
+        const dy = pos.y - holdPosition.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance > HOLD_MOVEMENT_THRESHOLD) {
+          // Reset hold timer since pen moved
+          startHoldTimer(pos);
+        }
+      } else {
+        // First time - start hold timer
+        startHoldTimer(pos);
+      }
+    }
+
     // Fast scribble detection
     if (scribbleEraseEnabled && !liveScribbleTriggered && 
         currentTool !== 'eraser' && currentTool !== 'highlighter' &&
         currentStroke.points.length > 12) {
       const dx = pos.x - lastPoint.x;
       const dy = pos.y - lastPoint.y;
-      if (dx * liveLastDx + dy * liveLastDy < 0) {
-        liveDirectionChanges++;
-      }
+      if (dx * liveLastDx + dy * liveLastDy < 0) liveDirectionChanges++;
       liveLastDx = dx;
       liveLastDy = dy;
       if (liveDirectionChanges >= 4 && isLiveScribble(currentStroke.points)) {
         liveScribbleTriggered = true;
+        clearHoldTimer();
         eraseScribbledStrokes(currentStroke.points);
         currentStroke = null;
         isDrawing = false;
@@ -488,21 +629,15 @@ const Canvas = (() => {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     
-    if (penStyle === 'dashed') {
-      ctx.setLineDash([dynamicSize * 2, dynamicSize * 1.5]);
-    } else if (penStyle === 'dotted') {
-      ctx.setLineDash([1, dynamicSize * 1.5]);
-    } else {
-      ctx.setLineDash([]);
-    }
+    if (penStyle === 'dashed') ctx.setLineDash([dynamicSize * 2, dynamicSize * 1.5]);
+    else if (penStyle === 'dotted') ctx.setLineDash([1, dynamicSize * 1.5]);
+    else ctx.setLineDash([]);
 
     if (penStyle === 'double') {
-      // Draw two parallel lines
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       const offset = dynamicSize;
       const dx = Math.cos(angle + Math.PI / 2) * offset;
       const dy = Math.sin(angle + Math.PI / 2) * offset;
-      
       ctx.lineWidth = dynamicSize / 3;
       ctx.beginPath();
       ctx.moveTo(p1.x + dx, p1.y + dy);
@@ -513,13 +648,11 @@ const Canvas = (() => {
       ctx.lineTo(p2.x - dx, p2.y - dy);
       ctx.stroke();
     } else if (penStyle === 'curly') {
-      // Wavy line
       const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       const amplitude = dynamicSize * 1.5;
       const wavelength = dynamicSize * 3;
       const numWaves = Math.max(1, Math.floor(dist / wavelength));
-      
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       for (let i = 1; i <= numWaves * 4; i++) {
@@ -527,19 +660,15 @@ const Canvas = (() => {
         const x = p1.x + (p2.x - p1.x) * t;
         const y = p1.y + (p2.y - p1.y) * t;
         const waveOffset = Math.sin(t * numWaves * Math.PI * 2) * amplitude;
-        const offsetX = Math.cos(angle + Math.PI / 2) * waveOffset;
-        const offsetY = Math.sin(angle + Math.PI / 2) * waveOffset;
-        ctx.lineTo(x + offsetX, y + offsetY);
+        ctx.lineTo(x + Math.cos(angle + Math.PI / 2) * waveOffset, y + Math.sin(angle + Math.PI / 2) * waveOffset);
       }
       ctx.stroke();
     } else if (penStyle === 'zigzag') {
-      // Zigzag line
       const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       const amplitude = dynamicSize * 1.5;
       const wavelength = dynamicSize * 2;
       const numZigs = Math.max(1, Math.floor(dist / wavelength));
-      
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       for (let i = 1; i <= numZigs * 2; i++) {
@@ -547,13 +676,10 @@ const Canvas = (() => {
         const x = p1.x + (p2.x - p1.x) * t;
         const y = p1.y + (p2.y - p1.y) * t;
         const zigOffset = (i % 2 === 0 ? 1 : -1) * amplitude;
-        const offsetX = Math.cos(angle + Math.PI / 2) * zigOffset;
-        const offsetY = Math.sin(angle + Math.PI / 2) * zigOffset;
-        ctx.lineTo(x + offsetX, y + offsetY);
+        ctx.lineTo(x + Math.cos(angle + Math.PI / 2) * zigOffset, y + Math.sin(angle + Math.PI / 2) * zigOffset);
       }
       ctx.stroke();
     } else {
-      // Solid, dashed, or dotted
       const mx = (p1.x + p2.x) / 2;
       const my = (p1.y + p2.y) / 2;
       ctx.beginPath();
@@ -561,11 +687,13 @@ const Canvas = (() => {
       ctx.quadraticCurveTo(p1.x, p1.y, mx, my);
       ctx.stroke();
     }
-    
     ctx.setLineDash([]);
   }
 
   function onPointerUp(e) {
+    clearHoldTimer();
+    holdPosition = null;
+    
     if (!isDrawing) return;
     isDrawing = false;
     lastPoint = null;
@@ -575,7 +703,8 @@ const Canvas = (() => {
     try { if (e && e.pointerId) drawingCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
 
     if (currentStroke && currentStroke.points.length > 0) {
-      if (shapeRecognitionEnabled && currentTool === 'pen' && currentStroke.points.length > 8) {
+      // Auto shape recognition (only if toggle is ON and hold didn't trigger)
+      if (!holdTriggered && shapeRecognitionEnabled && currentTool === 'pen' && currentStroke.points.length > 8) {
         const shape = detectShape(currentStroke.points);
         if (shape) {
           currentStroke.points = generateShapePoints(shape, currentStroke.points);
@@ -583,6 +712,7 @@ const Canvas = (() => {
           if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type}`);
         }
       }
+      // Beautify
       if (beautifyEnabled && currentTool !== 'eraser' && !currentStroke.recognizedShape) {
         currentStroke = beautifyStroke(currentStroke);
       }
@@ -591,6 +721,7 @@ const Canvas = (() => {
       redrawStrokes();
     }
     currentStroke = null;
+    holdTriggered = false;
   }
 
   function isLiveScribble(points) {
@@ -626,11 +757,8 @@ const Canvas = (() => {
     const maxX = Math.max(...xs) + 15;
     const minY = Math.min(...ys) - 15;
     const maxY = Math.max(...ys) + 15;
-    strokes = strokes.filter(stroke => {
-      return !stroke.points.some(p =>
-        p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY
-      );
-    });
+    strokes = strokes.filter(stroke => !stroke.points.some(p =>
+      p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY));
   }
 
   function beautifyStroke(stroke) {
@@ -813,9 +941,7 @@ const Canvas = (() => {
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
-    strokes = strokes.filter(stroke => 
-      !stroke.points.some(p => Math.sqrt(Math.pow(p.x - x, 2) + Math.pow(p.y - y, 2)) < radius)
-    );
+    strokes = strokes.filter(stroke => !stroke.points.some(p => Math.sqrt(Math.pow(p.x - x, 2) + Math.pow(p.y - y, 2)) < radius));
   }
 
   function undo() {
@@ -846,25 +972,18 @@ const Canvas = (() => {
     ctx.clearRect(0, 0, w, h);
     strokes.forEach(stroke => {
       if (stroke.points.length < 1) return;
-      const savedTool = currentTool;
-      const savedColor = penColor;
-      const savedSize = penSize;
-      const savedOpacity = penOpacity;
-      const savedStyle = penStyle;
+      const savedTool = currentTool, savedColor = penColor, savedSize = penSize;
+      const savedOpacity = penOpacity, savedStyle = penStyle;
       currentTool = stroke.tool;
       penColor = stroke.color;
       penSize = stroke.size;
       penOpacity = stroke.opacity || 1;
       penStyle = stroke.style || 'solid';
-      
       if (stroke.points.length === 1) {
         drawStrokeStart(stroke.points[0]);
       } else {
-        for (let i = 1; i < stroke.points.length; i++) {
-          drawSegment(stroke.points[i-1], stroke.points[i]);
-        }
+        for (let i = 1; i < stroke.points.length; i++) drawSegment(stroke.points[i-1], stroke.points[i]);
       }
-      
       currentTool = savedTool;
       penColor = savedColor;
       penSize = savedSize;
