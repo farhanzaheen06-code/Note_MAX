@@ -422,7 +422,6 @@ const Canvas = (() => {
   function showHoldIndicator(pos, type, duration) {
     const id = type === 'shape' ? 'shapeHoldIndicator' : 'scribbleHoldIndicator';
     const color = type === 'shape' ? 'var(--accent)' : '#ff453a';
-
     let indicator = document.getElementById(id);
     if (!indicator) {
       indicator = document.createElement('div');
@@ -494,14 +493,8 @@ const Canvas = (() => {
       points: [pos]
     };
 
-    if (currentTool !== 'eraser') {
-      ctx.globalAlpha = currentTool === 'highlighter' ? 0.3 : penOpacity;
-      ctx.fillStyle = penColor;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, penSize / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
+    // Full redraw shows the initial dot immediately
+    redrawStrokes();
   }
 
   function onPointerMove(e) {
@@ -555,8 +548,10 @@ const Canvas = (() => {
       if (currentTool === 'eraser') {
         eraseAt(pos.x, pos.y, penSize * 4);
       } else {
-        drawIncrementalSegment(currentStroke);
+        // Always full redraw - guarantees currentStroke is always visible
+        redrawStrokes();
       }
+
       lastPoint = pos;
     }
   }
@@ -590,80 +585,25 @@ const Canvas = (() => {
 
       strokes.push(currentStroke);
       redoStack = [];
-      redrawStrokes();
     }
+
+    // Null first, then redraw so it's cleanly committed
     currentStroke = null;
     shapeHoldTriggered = false;
+    redrawStrokes();
   }
 
-  // ========== CORE: INCREMENTAL DRAWING (THE FIX) ==========
-  function drawIncrementalSegment(stroke) {
-    if (!ctx || !stroke) return;
-    const pts = stroke.points;
-    if (pts.length < 2) return;
-
-    const style = stroke.style || 'solid';
-
-    // Non-solid styles need full redraw to look correct
-    if (style !== 'solid') {
-      redrawStrokes();
-      return;
-    }
-
-    const isHighlighter = stroke.tool === 'highlighter';
-    ctx.globalAlpha = isHighlighter ? 0.3 : (stroke.opacity || 1);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = stroke.color;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.setLineDash([]);
-
-    const n = pts.length;
-
-    if (n === 2) {
-      // First segment - straight line
-      const p0 = pts[0];
-      const p1 = pts[1];
-      const width = isHighlighter ? stroke.size : stroke.size * (0.6 + (p1.pressure || 0.5) * 0.6);
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(p0.x, p0.y);
-      ctx.lineTo(p1.x, p1.y);
-      ctx.stroke();
-    } else {
-      // Smooth quadratic curve segments
-      const p0 = pts[n - 3];
-      const p1 = pts[n - 2];
-      const p2 = pts[n - 1];
-
-      const width = isHighlighter ? stroke.size : stroke.size * (0.6 + (p2.pressure || 0.5) * 0.6);
-      ctx.lineWidth = width;
-
-      const m1x = (p0.x + p1.x) / 2;
-      const m1y = (p0.y + p1.y) / 2;
-      const m2x = (p1.x + p2.x) / 2;
-      const m2y = (p1.y + p2.y) / 2;
-
-      ctx.beginPath();
-      ctx.moveTo(m1x, m1y);
-      ctx.quadraticCurveTo(p1.x, p1.y, m2x, m2y);
-      ctx.stroke();
-    }
-
-    ctx.globalAlpha = 1;
-  }
-
-  // ========== CORE: REDRAW ALL (THE FIX - includes currentStroke) ==========
+  // ========== REDRAW - Always includes currentStroke ==========
   function redrawStrokes() {
     if (!ctx) return;
     const w = drawingCanvas.width / dpr;
     const h = drawingCanvas.height / dpr;
     ctx.clearRect(0, 0, w, h);
 
-    // Draw all committed strokes
+    // All committed strokes
     strokes.forEach(stroke => renderStroke(stroke));
 
-    // Draw in-progress stroke so it's never lost during redraws
+    // Current in-progress stroke - always render so it's never lost
     if (currentStroke && currentStroke.points.length > 0) {
       renderStroke(currentStroke);
     }
@@ -693,13 +633,13 @@ const Canvas = (() => {
 
     const style = stroke.style || 'solid';
     switch (style) {
-      case 'solid':   renderSolid(stroke);   break;
-      case 'dashed':  renderDashed(stroke);  break;
-      case 'dotted':  renderDotted(stroke);  break;
-      case 'double':  renderDouble(stroke);  break;
-      case 'curly':   renderWavy(stroke);    break;
-      case 'zigzag':  renderZigzag(stroke);  break;
-      default:        renderSolid(stroke);
+      case 'solid':  renderSolid(stroke);  break;
+      case 'dashed': renderDashed(stroke); break;
+      case 'dotted': renderDotted(stroke); break;
+      case 'double': renderDouble(stroke); break;
+      case 'curly':  renderWavy(stroke);   break;
+      case 'zigzag': renderZigzag(stroke); break;
+      default:       renderSolid(stroke);
     }
 
     ctx.globalAlpha = 1;
@@ -747,7 +687,7 @@ const Canvas = (() => {
         }
       }
     } else {
-      // Highlighter / other tools - simple smooth curve
+      // Highlighter / other - simple smooth curve
       ctx.lineWidth = stroke.size;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -783,7 +723,6 @@ const Canvas = (() => {
     ctx.beginPath();
     ctx.arc(pts[0].x, pts[0].y, stroke.size / 2, 0, Math.PI * 2);
     ctx.fill();
-
     let lastX = pts[0].x, lastY = pts[0].y;
     for (let i = 1; i < pts.length; i++) {
       const dx = pts[i].x - lastX;
@@ -803,7 +742,6 @@ const Canvas = (() => {
     const pts = stroke.points;
     const offset = stroke.size * 0.9;
     ctx.lineWidth = Math.max(1, stroke.size / 3);
-
     const upper = [], lower = [];
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
@@ -816,7 +754,6 @@ const Canvas = (() => {
       upper.push({ x: p.x + px, y: p.y + py });
       lower.push({ x: p.x - px, y: p.y - py });
     }
-
     [upper, lower].forEach(path => {
       ctx.beginPath();
       ctx.moveTo(path[0].x, path[0].y);
@@ -835,38 +772,31 @@ const Canvas = (() => {
     const amplitude = stroke.size * 1.8;
     const frequency = stroke.size * 3.5;
     ctx.lineWidth = stroke.size;
-
     const cumDist = [0];
     for (let i = 1; i < pts.length; i++) {
       const dx = pts[i].x - pts[i - 1].x;
       const dy = pts[i].y - pts[i - 1].y;
       cumDist.push(cumDist[i - 1] + Math.sqrt(dx * dx + dy * dy));
     }
-
     const totalDist = cumDist[cumDist.length - 1];
     if (totalDist < 5) return;
-
     const numSteps = Math.max(30, Math.floor(totalDist / 2));
     ctx.beginPath();
-
     for (let step = 0; step <= numSteps; step++) {
       const targetDist = (step / numSteps) * totalDist;
       let segIdx = 1;
       while (segIdx < cumDist.length && cumDist[segIdx] < targetDist) segIdx++;
       if (segIdx >= pts.length) segIdx = pts.length - 1;
-
       const p1 = pts[segIdx - 1];
       const p2 = pts[segIdx];
       const segLen = cumDist[segIdx] - cumDist[segIdx - 1];
       const localT = segLen > 0 ? (targetDist - cumDist[segIdx - 1]) / segLen : 0;
-
       const x = p1.x + (p2.x - p1.x) * localT;
       const y = p1.y + (p2.y - p1.y) * localT;
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       const waveOffset = Math.sin((targetDist / frequency) * Math.PI * 2) * amplitude;
       const wx = x + Math.cos(angle + Math.PI / 2) * waveOffset;
       const wy = y + Math.sin(angle + Math.PI / 2) * waveOffset;
-
       if (step === 0) ctx.moveTo(wx, wy);
       else ctx.lineTo(wx, wy);
     }
@@ -878,38 +808,31 @@ const Canvas = (() => {
     const amplitude = stroke.size * 1.5;
     const spacing = stroke.size * 1.8;
     ctx.lineWidth = stroke.size;
-
     const cumDist = [0];
     for (let i = 1; i < pts.length; i++) {
       const dx = pts[i].x - pts[i - 1].x;
       const dy = pts[i].y - pts[i - 1].y;
       cumDist.push(cumDist[i - 1] + Math.sqrt(dx * dx + dy * dy));
     }
-
     const totalDist = cumDist[cumDist.length - 1];
     if (totalDist < 5) return;
-
     const numPeaks = Math.max(3, Math.floor(totalDist / spacing));
     ctx.beginPath();
-
     for (let step = 0; step <= numPeaks; step++) {
       const targetDist = (step / numPeaks) * totalDist;
       let segIdx = 1;
       while (segIdx < cumDist.length && cumDist[segIdx] < targetDist) segIdx++;
       if (segIdx >= pts.length) segIdx = pts.length - 1;
-
       const p1 = pts[segIdx - 1];
       const p2 = pts[segIdx];
       const segLen = cumDist[segIdx] - cumDist[segIdx - 1];
       const localT = segLen > 0 ? (targetDist - cumDist[segIdx - 1]) / segLen : 0;
-
       const x = p1.x + (p2.x - p1.x) * localT;
       const y = p1.y + (p2.y - p1.y) * localT;
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       const zigOffset = (step % 2 === 0 ? 1 : -1) * amplitude;
       const zx = x + Math.cos(angle + Math.PI / 2) * zigOffset;
       const zy = y + Math.sin(angle + Math.PI / 2) * zigOffset;
-
       if (step === 0) ctx.moveTo(zx, zy);
       else ctx.lineTo(zx, zy);
     }
@@ -919,7 +842,6 @@ const Canvas = (() => {
   // ========== SCRIBBLE DETECTION ==========
   function isScribblePattern(points) {
     if (points.length < 20) return false;
-
     const recent = points.slice(-Math.min(30, points.length));
     let directionChanges = 0;
     let lastDx = 0, lastDy = 0;
@@ -929,7 +851,6 @@ const Canvas = (() => {
       const dx = recent[i].x - recent[i - 1].x;
       const dy = recent[i].y - recent[i - 1].y;
       const mag = Math.sqrt(dx * dx + dy * dy);
-
       if (i > 1 && mag > 1) {
         const dotProduct = dx * lastDx + dy * lastDy;
         const magPrev = Math.sqrt(lastDx * lastDx + lastDy * lastDy);
@@ -947,17 +868,14 @@ const Canvas = (() => {
     const ys = recent.map(p => p.y);
     const width = Math.max(...xs) - Math.min(...xs);
     const height = Math.max(...ys) - Math.min(...ys);
-
     let pathLength = 0;
     for (let i = 1; i < recent.length; i++) {
       const dx = recent[i].x - recent[i - 1].x;
       const dy = recent[i].y - recent[i - 1].y;
       pathLength += Math.sqrt(dx * dx + dy * dy);
     }
-
     const boxDiagonal = Math.sqrt(width * width + height * height);
     if (boxDiagonal < 20) return false;
-
     const compactness = pathLength / boxDiagonal;
     return significantChanges >= 4 && compactness > 3 && directionChanges >= 5;
   }
@@ -1032,7 +950,6 @@ const Canvas = (() => {
   // ========== SHAPE RECOGNITION ==========
   function detectShape(points) {
     if (points.length < 8) return null;
-
     const xs = points.map(p => p.x);
     const ys = points.map(p => p.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -1070,13 +987,11 @@ const Canvas = (() => {
       if (cv < 0.18) {
         return {
           type: aspectRatio > 0.85 && aspectRatio < 1.18 ? 'Circle' : 'Ellipse',
-          centerX, centerY,
-          radiusX: width / 2, radiusY: height / 2
+          centerX, centerY, radiusX: width / 2, radiusY: height / 2
         };
       }
 
       const corners = countCorners(points);
-
       if (corners === 3) return { type: 'Triangle', vertices: findTriangleVertices(points) };
 
       if (corners === 4) {
@@ -1108,12 +1023,10 @@ const Canvas = (() => {
       if (cv < 0.28) {
         return {
           type: aspectRatio > 0.85 && aspectRatio < 1.18 ? 'Circle' : 'Ellipse',
-          centerX, centerY,
-          radiusX: width / 2, radiusY: height / 2
+          centerX, centerY, radiusX: width / 2, radiusY: height / 2
         };
       }
     }
-
     return null;
   }
 
@@ -1122,14 +1035,11 @@ const Canvas = (() => {
     const avg = distances.reduce((a, b) => a + b, 0) / distances.length;
     let peaks = 0;
     for (let i = 2; i < distances.length - 2; i++) {
-      if (distances[i] > avg * 1.15 && distances[i] > distances[i - 2] && distances[i] > distances[i + 2]) {
-        peaks++;
-      }
+      if (distances[i] > avg * 1.15 && distances[i] > distances[i - 2] && distances[i] > distances[i + 2]) peaks++;
     }
     if (peaks >= 4 && peaks <= 6) {
       return {
-        type: 'Star',
-        centerX: cx, centerY: cy,
+        type: 'Star', centerX: cx, centerY: cy,
         outerRadius: Math.max(...distances),
         innerRadius: Math.min(...distances),
         points: peaks
@@ -1140,8 +1050,7 @@ const Canvas = (() => {
 
   function findTriangleVertices(points) {
     const ys = points.map(p => p.y);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
     let top = points[0], bottomLeft = points[0], bottomRight = points[0];
     points.forEach(p => {
       if (p.y < top.y) top = p;
@@ -1227,7 +1136,7 @@ const Canvas = (() => {
         shape.vertices.forEach(v => pts.push({ x: v.x, y: v.y, pressure: 0.7 }));
         pts.push({ x: shape.vertices[0].x, y: shape.vertices[0].y, pressure: 0.7 });
         break;
-      case 'Star':
+      case 'Star': {
         const numPoints = shape.points || 5;
         for (let i = 0; i <= numPoints * 2; i++) {
           const angle = (i / (numPoints * 2)) * Math.PI * 2 - Math.PI / 2;
@@ -1235,6 +1144,7 @@ const Canvas = (() => {
           pts.push({ x: shape.centerX + Math.cos(angle) * r, y: shape.centerY + Math.sin(angle) * r, pressure: 0.7 });
         }
         break;
+      }
       case 'Line':
         pts.push({ x: shape.start.x, y: shape.start.y, pressure: 0.7 });
         pts.push({ x: shape.end.x, y: shape.end.y, pressure: 0.7 });
