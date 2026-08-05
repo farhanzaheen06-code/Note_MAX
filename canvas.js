@@ -1,4 +1,4 @@
-// ===== CANVAS MODULE - OPTIMIZED + PROPER MENU HANDLING =====
+// ===== CANVAS - PURE PEN DRAWING =====
 const Canvas = (() => {
   let drawingCanvas, bgCanvas, ctx, bgCtx;
   let isDrawing = false;
@@ -13,6 +13,7 @@ const Canvas = (() => {
   let lastPoint = null;
   let scribbleEraseEnabled = true;
   let shapeRecognitionEnabled = false;
+  let fingerDrawEnabled = false;
   let menuOpen = false;
   let dpr = 1;
 
@@ -21,7 +22,7 @@ const Canvas = (() => {
     bgCanvas = document.getElementById('bgCanvas');
     if (!drawingCanvas || !bgCanvas) return;
     
-    ctx = drawingCanvas.getContext('2d', { willReadFrequently: false });
+    ctx = drawingCanvas.getContext('2d');
     bgCtx = bgCanvas.getContext('2d');
     dpr = window.devicePixelRatio || 1;
     
@@ -44,10 +45,10 @@ const Canvas = (() => {
   }
 
   function debounce(fn, wait) {
-    let timeout;
+    let t;
     return function(...args) {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => fn.apply(this, args), wait);
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), wait);
     };
   }
 
@@ -59,34 +60,27 @@ const Canvas = (() => {
       setTimeout(resizeCanvases, 100);
       return;
     }
-    
     dpr = window.devicePixelRatio || 1;
-
     [drawingCanvas, bgCanvas].forEach(c => {
       c.width = rect.width * dpr;
       c.height = rect.height * dpr;
       c.style.width = rect.width + 'px';
       c.style.height = rect.height + 'px';
     });
-
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     bgCtx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
     bgCtx.scale(dpr, dpr);
-
     drawBackground();
     redrawStrokes();
   }
 
-  // ========== SETUP OUTSIDE CLICK TO CLOSE MENU ==========
   function setupOutsideClick() {
     document.addEventListener('pointerdown', (e) => {
       if (!menuOpen) return;
-      
       const panel = document.getElementById('penSettings');
       const clickedInsidePanel = panel && panel.contains(e.target);
       const clickedPenTool = e.target.closest('.pen-preset');
-      
       if (!clickedInsidePanel && !clickedPenTool) {
         closePenSettings();
       }
@@ -113,51 +107,40 @@ const Canvas = (() => {
   }
 
   function setupToolbar() {
-    // ===== PEN PRESETS =====
     document.querySelectorAll('.pen-preset').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const wasActive = btn.classList.contains('active');
-        
         document.querySelectorAll('.pen-tool').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentTool = 'pen';
         penColor = btn.dataset.color;
-        
         const colorPicker = document.getElementById('penColorPicker');
         if (colorPicker) colorPicker.value = penColor;
-        
-        // Toggle menu on repeat click of same pen, open on new pen
         if (wasActive) togglePenSettings();
         else openPenSettings();
-        
         updateCursor();
       });
     });
 
-    // ===== OTHER TOOLS =====
     document.querySelectorAll('.pen-tool:not(.pen-preset)').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const tool = btn.dataset.tool;
         if (!tool) return;
-        
         document.querySelectorAll('.pen-tool').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentTool = tool;
-        
         if (tool === 'highlighter') {
           penColor = '#ffff00';
           openPenSettings();
         } else {
           closePenSettings();
         }
-        
         updateCursor();
       });
     });
 
-    // ===== SHAPE RECOGNITION =====
     const autoShape = document.getElementById('autoShapeBtn');
     if (autoShape) {
       autoShape.addEventListener('click', (e) => {
@@ -172,24 +155,20 @@ const Canvas = (() => {
       });
     }
 
-    // ===== CLOSE PANEL BUTTON =====
     document.getElementById('closePenSettings')?.addEventListener('click', (e) => {
       e.stopPropagation();
       closePenSettings();
     });
 
-    // ===== COLOR PICKER =====
     const colorPicker = document.getElementById('penColorPicker');
     if (colorPicker) {
-      colorPicker.addEventListener('input', e => { 
+      colorPicker.addEventListener('input', e => {
         penColor = e.target.value;
-        // Update active pen preset visual
         const activePreset = document.querySelector('.pen-preset.active .pen-visual');
         if (activePreset) activePreset.style.background = penColor;
       });
     }
 
-    // ===== SIZE SLIDER =====
     const sizeSlider = document.getElementById('penSizeSlider');
     const sizeValue = document.getElementById('penSizeValue');
     if (sizeSlider) {
@@ -199,7 +178,6 @@ const Canvas = (() => {
       });
     }
 
-    // ===== OPACITY =====
     const opacitySlider = document.getElementById('penOpacity');
     const opacityValue = document.getElementById('opacityValue');
     if (opacitySlider) {
@@ -209,7 +187,6 @@ const Canvas = (() => {
       });
     }
 
-    // ===== BACKGROUND =====
     const bgSelect = document.getElementById('canvasBgSelect');
     if (bgSelect) {
       bgSelect.addEventListener('change', e => {
@@ -218,7 +195,6 @@ const Canvas = (() => {
       });
     }
 
-    // ===== TOGGLES =====
     const scribbleToggle = document.getElementById('scribbleEraseToggle');
     if (scribbleToggle) {
       scribbleToggle.addEventListener('change', e => {
@@ -238,7 +214,16 @@ const Canvas = (() => {
       });
     }
 
-    // ===== UNDO / REDO =====
+    const fingerToggle = document.getElementById('fingerDrawToggle');
+    if (fingerToggle) {
+      fingerToggle.addEventListener('change', e => {
+        fingerDrawEnabled = e.target.checked;
+        if (typeof UI !== 'undefined') {
+          UI.showToast(fingerDrawEnabled ? '👆 Finger drawing ON' : '✏️ Pencil only');
+        }
+      });
+    }
+
     document.getElementById('undoBtn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       undo();
@@ -248,7 +233,6 @@ const Canvas = (() => {
       redo();
     });
 
-    // ===== PREVENT PANEL FROM CLOSING WHEN INTERACTING INSIDE =====
     const penSettings = document.getElementById('penSettings');
     if (penSettings) {
       penSettings.addEventListener('pointerdown', e => e.stopPropagation());
@@ -273,12 +257,22 @@ const Canvas = (() => {
     };
   }
 
+  function shouldAcceptInput(e) {
+    // Always allow mouse
+    if (e.pointerType === 'mouse') return true;
+    // Always allow pencil
+    if (e.pointerType === 'pen') return true;
+    // Only allow finger/touch if enabled
+    if (e.pointerType === 'touch') return fingerDrawEnabled;
+    return true;
+  }
+
   function onPointerDown(e) {
     if (currentTool === 'select' || currentTool === 'lasso') return;
+    if (!shouldAcceptInput(e)) return;
+    
     e.preventDefault();
     e.stopPropagation();
-    
-    // Close menu when starting to draw
     if (menuOpen) closePenSettings();
     
     try { drawingCanvas.setPointerCapture(e.pointerId); } catch (err) {}
@@ -306,6 +300,7 @@ const Canvas = (() => {
 
   function onPointerMove(e) {
     if (!isDrawing) return;
+    if (!shouldAcceptInput(e)) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -319,14 +314,12 @@ const Canvas = (() => {
       const dynamicSize = currentTool === 'pen'
         ? penSize * (0.5 + pos.pressure * 0.8)
         : penSize;
-
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = currentTool === 'highlighter' ? 0.3 : penOpacity;
       ctx.strokeStyle = penColor;
       ctx.lineWidth = dynamicSize;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-
       if (lastPoint) {
         const mx = (lastPoint.x + pos.x) / 2;
         const my = (lastPoint.y + pos.y) / 2;
@@ -336,7 +329,6 @@ const Canvas = (() => {
         ctx.stroke();
       }
     }
-
     lastPoint = pos;
   }
 
@@ -346,7 +338,6 @@ const Canvas = (() => {
     lastPoint = null;
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-
     try { if (e && e.pointerId) drawingCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
 
     if (currentStroke && currentStroke.points.length > 0) {
@@ -359,16 +350,14 @@ const Canvas = (() => {
           return;
         }
       }
-
       if (shapeRecognitionEnabled && currentTool === 'pen' && currentStroke.points.length > 8) {
         const shape = detectShape(currentStroke.points);
         if (shape) {
           currentStroke.points = generateShapePoints(shape, currentStroke.points);
           currentStroke.recognizedShape = shape.type;
-          if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type} detected`);
+          if (typeof UI !== 'undefined') UI.showToast(`✨ ${shape.type}`);
         }
       }
-
       strokes.push(currentStroke);
       redoStack = [];
       redrawStrokes();
@@ -376,7 +365,6 @@ const Canvas = (() => {
     currentStroke = null;
   }
 
-  // ========== SCRIBBLE ==========
   function isScribble(points) {
     if (points.length < 20) return false;
     let directionChanges = 0;
@@ -385,8 +373,7 @@ const Canvas = (() => {
       const dx = points[i].x - points[i-1].x;
       const dy = points[i].y - points[i-1].y;
       if (i > 1) {
-        const dotProduct = dx * lastDx + dy * lastDy;
-        if (dotProduct < 0) directionChanges++;
+        if (dx * lastDx + dy * lastDy < 0) directionChanges++;
       }
       lastDx = dx; lastDy = dy;
     }
@@ -419,7 +406,6 @@ const Canvas = (() => {
     });
   }
 
-  // ========== SHAPE RECOGNITION ==========
   function detectShape(points) {
     if (points.length < 8) return null;
     const xs = points.map(p => p.x);
@@ -439,7 +425,6 @@ const Canvas = (() => {
       const aspectRatio = width / height;
       const avgRadius = (width + height) / 4;
       let circleScore = 0, rectScore = 0;
-
       points.forEach(p => {
         const dist = Math.sqrt(Math.pow(p.x - centerX, 2) + Math.pow(p.y - centerY, 2));
         if (Math.abs(dist - avgRadius) < avgRadius * 0.25) circleScore++;
@@ -450,17 +435,14 @@ const Canvas = (() => {
           Math.abs(p.y - maxY) < height * 0.1;
         if (nearEdge) rectScore++;
       });
-
       const cP = circleScore / points.length;
       const rP = rectScore / points.length;
-
       if (cP > 0.6 && cP > rP) {
         return {
           type: aspectRatio > 0.85 && aspectRatio < 1.15 ? 'Circle' : 'Ellipse',
           centerX, centerY, radiusX: width / 2, radiusY: height / 2
         };
       }
-
       if (rP > 0.55) {
         const corners = detectCorners(points);
         if (corners === 3) return {
@@ -669,7 +651,7 @@ const Canvas = (() => {
     link.download = 'notemax-drawing.png';
     link.href = merged.toDataURL('image/png');
     link.click();
-    if (typeof UI !== 'undefined') UI.showToast('Image saved!');
+    if (typeof UI !== 'undefined') UI.showToast('Saved!');
   }
 
   function getStrokes() { return strokes; }
