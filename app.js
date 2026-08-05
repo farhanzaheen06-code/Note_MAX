@@ -1,6 +1,5 @@
-// ===== MAIN APP MODULE =====
+// ===== MAIN APP =====
 const NoteApp = (() => {
-
   let allNotes = [];
   let allFolders = [];
   let allTags = [];
@@ -9,29 +8,22 @@ const NoteApp = (() => {
   let currentTagId = null;
   let searchQuery = '';
   let sortBy = 'modified';
-  let isGridView = false;
 
-  // ===== INIT =====
   async function init() {
     await DB.open();
-
     UI.init();
     Editor.init();
     Canvas.init();
     Export.init();
-
     await UI.loadSavedTheme();
     await loadData();
-
+    setupSidebarToggles();
     setupNewNote();
     setupFilters();
     setupSearch();
     setupSort();
-    setupViewToggle();
-
     document.getElementById('emptyNewBtn')?.addEventListener('click', createNewNote);
-
-    // Register Service Worker
+    document.getElementById('emptyBrowseBtn')?.addEventListener('click', showNoteList);
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('service-worker.js').catch(() => {});
     }
@@ -39,6 +31,54 @@ const NoteApp = (() => {
 
   async function loadData() {
     await Promise.all([refreshNoteList(), refreshFolders(), refreshTags()]);
+  }
+
+  // ===== SIDEBAR TOGGLES =====
+  function setupSidebarToggles() {
+    document.getElementById('menuBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSidebar();
+    });
+    document.getElementById('notesBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleNoteList();
+    });
+    document.getElementById('closeSidebarBtn')?.addEventListener('click', () => {
+      document.body.classList.add('sidebar-hidden');
+      updateBackdrop();
+    });
+    document.getElementById('closeNoteListBtn')?.addEventListener('click', () => {
+      document.body.classList.add('notelist-hidden');
+      updateBackdrop();
+    });
+    document.getElementById('backdrop')?.addEventListener('click', () => {
+      document.body.classList.add('sidebar-hidden');
+      document.body.classList.add('notelist-hidden');
+      updateBackdrop();
+    });
+  }
+
+  function toggleSidebar() {
+    document.body.classList.toggle('sidebar-hidden');
+    updateBackdrop();
+  }
+
+  function toggleNoteList() {
+    document.body.classList.toggle('notelist-hidden');
+    updateBackdrop();
+  }
+
+  function showNoteList() {
+    document.body.classList.remove('notelist-hidden');
+    updateBackdrop();
+  }
+
+  function updateBackdrop() {
+    const bd = document.getElementById('backdrop');
+    if (!bd) return;
+    const showBackdrop = !document.body.classList.contains('sidebar-hidden') ||
+                         !document.body.classList.contains('notelist-hidden');
+    bd.classList.toggle('hidden', !showBackdrop);
   }
 
   // ===== NEW NOTE =====
@@ -61,25 +101,20 @@ const NoteApp = (() => {
       createdAt: Date.now(),
       modifiedAt: Date.now()
     };
-
     await DB.put(DB.STORES.NOTES, note);
     await refreshNoteList();
     openNote(note);
-    document.getElementById('titleInput')?.focus();
+    document.body.classList.add('notelist-hidden');
+    document.body.classList.add('sidebar-hidden');
+    updateBackdrop();
+    setTimeout(() => document.getElementById('titleInput')?.focus(), 100);
   }
 
-  // ===== OPEN NOTE =====
   function openNote(note) {
     Editor.loadNote(note);
-
     document.querySelectorAll('.note-item').forEach(item => {
       item.classList.toggle('active', item.dataset.id === note.id);
     });
-
-    // Mobile: show editor
-    if (window.innerWidth <= 768) {
-      document.getElementById('editorPanel').classList.add('mobile-show');
-    }
   }
 
   // ===== FILTERS =====
@@ -99,28 +134,17 @@ const NoteApp = (() => {
     });
   }
 
-  // ===== SEARCH =====
   function setupSearch() {
     document.getElementById('searchInput')?.addEventListener('input', e => {
       searchQuery = e.target.value.toLowerCase();
-      document.getElementById('clearSearch').style.display = searchQuery ? 'block' : 'none';
-      refreshNoteList();
-    });
-
-    document.getElementById('clearSearch')?.addEventListener('click', () => {
-      document.getElementById('searchInput').value = '';
-      searchQuery = '';
-      document.getElementById('clearSearch').style.display = 'none';
       refreshNoteList();
     });
   }
 
-  // ===== SORT =====
   function setupSort() {
     document.getElementById('sortBtn')?.addEventListener('click', () => {
       document.getElementById('sortDropdown').classList.toggle('hidden');
     });
-
     document.querySelectorAll('.sort-option').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.sort-option').forEach(b => b.classList.remove('active'));
@@ -130,8 +154,6 @@ const NoteApp = (() => {
         refreshNoteList();
       });
     });
-
-    // Close sort when clicking outside
     document.addEventListener('click', e => {
       if (!e.target.closest('#sortBtn') && !e.target.closest('#sortDropdown')) {
         document.getElementById('sortDropdown')?.classList.add('hidden');
@@ -139,22 +161,10 @@ const NoteApp = (() => {
     });
   }
 
-  // ===== VIEW TOGGLE =====
-  function setupViewToggle() {
-    document.getElementById('viewToggleBtn')?.addEventListener('click', () => {
-      isGridView = !isGridView;
-      const container = document.getElementById('notesContainer');
-      container.classList.toggle('grid-view', isGridView);
-    });
-  }
-
-  // ===== NOTE LIST =====
   async function refreshNoteList() {
     allNotes = await DB.getAll(DB.STORES.NOTES);
-
     let filtered = allNotes;
 
-    // Apply filter
     switch (currentFilter) {
       case 'pinned': filtered = filtered.filter(n => n.pinned && !n.trashed); break;
       case 'favorites': filtered = filtered.filter(n => n.favorite && !n.trashed); break;
@@ -162,17 +172,9 @@ const NoteApp = (() => {
       default: filtered = filtered.filter(n => !n.trashed);
     }
 
-    // Folder filter
-    if (currentFolderId) {
-      filtered = filtered.filter(n => n.folderId === currentFolderId);
-    }
+    if (currentFolderId) filtered = filtered.filter(n => n.folderId === currentFolderId);
+    if (currentTagId) filtered = filtered.filter(n => n.tags?.some(t => t.id === currentTagId));
 
-    // Tag filter
-    if (currentTagId) {
-      filtered = filtered.filter(n => n.tags?.some(t => t.id === currentTagId));
-    }
-
-    // Search
     if (searchQuery) {
       filtered = filtered.filter(n =>
         (n.title || '').toLowerCase().includes(searchQuery) ||
@@ -181,7 +183,6 @@ const NoteApp = (() => {
       );
     }
 
-    // Sort
     filtered.sort((a, b) => {
       if (sortBy === 'modified') return b.modifiedAt - a.modifiedAt;
       if (sortBy === 'created') return b.createdAt - a.createdAt;
@@ -190,7 +191,6 @@ const NoteApp = (() => {
       return 0;
     });
 
-    // Pinned first (only in 'all' view)
     if (currentFilter === 'all') {
       const pinned = filtered.filter(n => n.pinned);
       const unpinned = filtered.filter(n => !n.pinned);
@@ -206,29 +206,22 @@ const NoteApp = (() => {
     container.innerHTML = '';
 
     if (notes.length === 0) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'text-align:center;padding:40px 20px;color:var(--text3);font-size:14px;';
-      empty.innerHTML = searchQuery
-        ? `<div style="font-size:40px">🔍</div><br>No notes match "<strong>${searchQuery}</strong>"`
-        : '<div style="font-size:40px">📭</div><br>No notes here yet';
-      container.appendChild(empty);
+      container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:14px;">
+        <div style="font-size:40px">📭</div><br>${searchQuery ? 'No results' : 'No notes yet'}
+      </div>`;
       return;
     }
 
     const currentNote = Editor.getCurrentNote();
-
     notes.forEach(note => {
       const item = document.createElement('div');
       item.className = 'note-item' + (note.id === currentNote?.id ? ' active' : '');
       item.dataset.id = note.id;
-
       const preview = getPlainText(note.content || '').substring(0, 100);
       const timeAgo = formatTime(note.modifiedAt);
-
       item.innerHTML = `
         <div class="note-item-title">
-          ${note.pinned ? '📌 ' : ''}
-          ${note.favorite ? '❤️ ' : ''}
+          ${note.pinned ? '📌 ' : ''}${note.favorite ? '❤️ ' : ''}
           ${note.title || '<span style="color:var(--text3)">Untitled</span>'}
         </div>
         <div class="note-item-preview">${preview || 'No content'}</div>
@@ -239,42 +232,28 @@ const NoteApp = (() => {
           ${note.checklist?.length ? `<span class="note-badge">✅ ${note.checklist.filter(i=>i.done).length}/${note.checklist.length}</span>` : ''}
         </div>
       `;
-
       item.addEventListener('click', () => openNote(note));
-
-      // Right-click / long-press context menu
       item.addEventListener('contextmenu', e => {
         e.preventDefault();
         showNoteContextMenu(e, note);
       });
-
       container.appendChild(item);
     });
   }
 
   function showNoteContextMenu(e, note) {
-    // Remove any existing context menu
     document.querySelector('.context-menu')?.remove();
-
     const menu = document.createElement('div');
     menu.className = 'context-menu';
-    menu.style.cssText = `
-      position:fixed; left:${Math.min(e.clientX, window.innerWidth-200)}px;
-      top:${Math.min(e.clientY, window.innerHeight-200)}px;
-      background:var(--surface); border:1px solid var(--border);
-      border-radius:10px; box-shadow:var(--shadow-lg);
-      z-index:500; overflow:hidden; min-width:180px;
-    `;
-
+    menu.style.cssText = `position:fixed;left:${Math.min(e.clientX, window.innerWidth-200)}px;top:${Math.min(e.clientY, window.innerHeight-200)}px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);z-index:500;overflow:hidden;min-width:180px;`;
     const actions = [
       { label: note.pinned ? '📌 Unpin' : '📌 Pin', action: () => togglePin(note) },
       { label: note.favorite ? '❤️ Unfavorite' : '❤️ Favorite', action: () => toggleFavorite(note) },
       { label: '📋 Duplicate', action: () => duplicateNote(note) },
       { separator: true },
-      { label: note.trashed ? '♻️ Restore' : '🗑 Move to Trash', action: () => trashNote(note), danger: !note.trashed },
+      { label: note.trashed ? '♻️ Restore' : '🗑 Trash', action: () => trashNote(note), danger: !note.trashed },
       ...(note.trashed ? [{ label: '💀 Delete Forever', action: () => deleteForever(note), danger: true }] : [])
     ];
-
     actions.forEach(a => {
       if (a.separator) {
         const sep = document.createElement('div');
@@ -282,24 +261,15 @@ const NoteApp = (() => {
         menu.appendChild(sep);
         return;
       }
-
       const btn = document.createElement('button');
-      btn.style.cssText = `
-        display:block; width:100%; padding:10px 16px;
-        background:none; border:none; text-align:left;
-        font-size:14px; cursor:pointer;
-        color:${a.danger ? 'var(--danger)' : 'var(--text)'};
-        transition:background var(--transition);
-      `;
+      btn.style.cssText = `display:block;width:100%;padding:10px 16px;background:none;border:none;text-align:left;font-size:14px;cursor:pointer;color:${a.danger ? 'var(--danger)' : 'var(--text)'};`;
       btn.textContent = a.label;
-      btn.addEventListener('mouseover', () => { btn.style.background = 'var(--surface2)'; });
-      btn.addEventListener('mouseout', () => { btn.style.background = 'none'; });
+      btn.addEventListener('mouseover', () => btn.style.background = 'var(--surface2)');
+      btn.addEventListener('mouseout', () => btn.style.background = 'none');
       btn.addEventListener('click', () => { a.action(); menu.remove(); });
       menu.appendChild(btn);
     });
-
     document.body.appendChild(menu);
-
     const closeMenu = e => {
       if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', closeMenu); }
     };
@@ -309,85 +279,53 @@ const NoteApp = (() => {
   async function togglePin(note) {
     note.pinned = !note.pinned;
     await DB.put(DB.STORES.NOTES, note);
-    UI.showToast(note.pinned ? 'Note pinned 📌' : 'Note unpinned');
     refreshNoteList();
   }
-
   async function toggleFavorite(note) {
     note.favorite = !note.favorite;
     await DB.put(DB.STORES.NOTES, note);
-    UI.showToast(note.favorite ? 'Added to favorites ❤️' : 'Removed from favorites');
     refreshNoteList();
   }
-
   async function duplicateNote(note) {
     const copy = { ...note, id: Date.now().toString(), title: (note.title || 'Untitled') + ' (copy)', createdAt: Date.now(), modifiedAt: Date.now(), pinned: false };
     await DB.put(DB.STORES.NOTES, copy);
-    UI.showToast('Note duplicated 📋');
     refreshNoteList();
     openNote(copy);
   }
-
   async function trashNote(note) {
     note.trashed = !note.trashed;
     await DB.put(DB.STORES.NOTES, note);
-    UI.showToast(note.trashed ? 'Moved to trash 🗑' : 'Note restored ♻️');
     if (note.trashed && Editor.getCurrentNote()?.id === note.id) Editor.closeEditor();
     refreshNoteList();
-    updateCounts();
   }
-
   async function deleteForever(note) {
-    if (!confirm('Permanently delete this note? This cannot be undone.')) return;
+    if (!confirm('Delete permanently?')) return;
     await DB.remove(DB.STORES.NOTES, note.id);
-    UI.showToast('Note permanently deleted 💀');
     if (Editor.getCurrentNote()?.id === note.id) Editor.closeEditor();
     refreshNoteList();
-    updateCounts();
   }
 
   function updateNoteItem(note) {
     const item = document.querySelector(`.note-item[data-id="${note.id}"]`);
     if (!item) return;
-    const preview = getPlainText(note.content || '').substring(0, 100);
-    const timeAgo = formatTime(note.modifiedAt);
-
     const titleEl = item.querySelector('.note-item-title');
-    const previewEl = item.querySelector('.note-item-preview');
-    const metaEl = item.querySelector('.note-item-meta');
-
-    if (titleEl) titleEl.innerHTML = `
-      ${note.pinned ? '📌 ' : ''}
-      ${note.favorite ? '❤️ ' : ''}
-      ${note.title || '<span style="color:var(--text3)">Untitled</span>'}
-    `;
-    if (previewEl) previewEl.textContent = preview || 'No content';
-    if (metaEl) metaEl.innerHTML = `
-      <span>${timeAgo}</span>
-      ${note.tags?.length ? `<span class="note-badge">${note.tags[0].name}</span>` : ''}
-      ${note.strokes?.length ? '<span class="note-badge">✏️</span>' : ''}
-      ${note.checklist?.length ? `<span class="note-badge">✅ ${note.checklist.filter(i=>i.done).length}/${note.checklist.length}</span>` : ''}
-    `;
+    if (titleEl) titleEl.innerHTML = `${note.pinned ? '📌 ' : ''}${note.favorite ? '❤️ ' : ''}${note.title || '<span style="color:var(--text3)">Untitled</span>'}`;
   }
 
-  // ===== FOLDERS =====
   async function refreshFolders() {
     allFolders = await DB.getAll(DB.STORES.FOLDERS);
     const list = document.getElementById('foldersList');
     list.innerHTML = '';
-
     for (const folder of allFolders) {
       const count = allNotes.filter(n => n.folderId === folder.id && !n.trashed).length;
-
       const li = document.createElement('li');
       li.className = 'folder-item' + (folder.id === currentFolderId ? ' active' : '');
       li.innerHTML = `
-        <span class="folder-icon">${folder.icon}</span>
+        <span>${folder.icon}</span>
         <span class="folder-name">${folder.name}</span>
         <span class="folder-count">${count}</span>
-        <button class="delete-folder" data-id="${folder.id}" title="Delete folder">✕</button>
+        <button class="delete-folder" data-id="${folder.id}">✕</button>
       `;
-
       li.addEventListener('click', e => {
         if (e.target.classList.contains('delete-folder')) return;
         document.querySelectorAll('.folder-item').forEach(f => f.classList.remove('active'));
@@ -399,43 +337,32 @@ const NoteApp = (() => {
         updateNoteListTitle(folder.name);
         refreshNoteList();
       });
-
       li.querySelector('.delete-folder').addEventListener('click', async e => {
         e.stopPropagation();
-        if (!confirm(`Delete folder "${folder.name}"? Notes will be unassigned.`)) return;
-        // Move notes out of folder
+        if (!confirm(`Delete folder "${folder.name}"?`)) return;
         const folderNotes = allNotes.filter(n => n.folderId === folder.id);
-        for (const n of folderNotes) {
-          n.folderId = null;
-          await DB.put(DB.STORES.NOTES, n);
-        }
+        for (const n of folderNotes) { n.folderId = null; await DB.put(DB.STORES.NOTES, n); }
         await DB.remove(DB.STORES.FOLDERS, folder.id);
         if (currentFolderId === folder.id) {
           currentFolderId = null;
           currentFilter = 'all';
           document.querySelector('[data-filter="all"]').classList.add('active');
         }
-        UI.showToast(`Folder "${folder.name}" deleted`);
-        refreshFolders();
-        refreshNoteList();
+        refreshFolders(); refreshNoteList();
       });
-
       list.appendChild(li);
     }
   }
 
-  // ===== TAGS =====
   async function refreshTags() {
     allTags = await DB.getAll(DB.STORES.TAGS);
     const container = document.getElementById('tagsList');
     container.innerHTML = '';
-
     allTags.forEach(tag => {
       const pill = document.createElement('div');
       pill.className = 'tag-pill' + (tag.id === currentTagId ? ' active' : '');
       pill.style.background = tag.color;
       pill.innerHTML = `#${tag.name} <button class="remove-tag" data-id="${tag.id}">✕</button>`;
-
       pill.addEventListener('click', e => {
         if (e.target.classList.contains('remove-tag')) return;
         document.querySelectorAll('.tag-pill').forEach(t => t.classList.remove('active'));
@@ -447,12 +374,10 @@ const NoteApp = (() => {
         updateNoteListTitle('#' + tag.name);
         refreshNoteList();
       });
-
       pill.querySelector('.remove-tag').addEventListener('click', async e => {
         e.stopPropagation();
         if (!confirm(`Delete tag "#${tag.name}"?`)) return;
         await DB.remove(DB.STORES.TAGS, tag.id);
-        // Remove from all notes
         for (const note of allNotes) {
           if (note.tags?.some(t => t.id === tag.id)) {
             note.tags = note.tags.filter(t => t.id !== tag.id);
@@ -460,20 +385,15 @@ const NoteApp = (() => {
           }
         }
         if (currentTagId === tag.id) {
-          currentTagId = null;
-          currentFilter = 'all';
+          currentTagId = null; currentFilter = 'all';
           document.querySelector('[data-filter="all"]').classList.add('active');
         }
-        UI.showToast(`Tag "#${tag.name}" deleted`);
-        refreshTags();
-        refreshNoteList();
+        refreshTags(); refreshNoteList();
       });
-
       container.appendChild(pill);
     });
   }
 
-  // ===== COUNTS =====
   async function updateCounts() {
     const notes = await DB.getAll(DB.STORES.NOTES);
     document.getElementById('allCount').textContent = notes.filter(n => !n.trashed).length;
@@ -484,17 +404,11 @@ const NoteApp = (() => {
 
   function updateNoteListTitle(title) {
     const el = document.getElementById('noteListTitle');
-    if (el) el.textContent = title || ({
-      all: 'All Notes', pinned: 'Pinned', favorites: 'Favorites', trash: 'Trash'
-    }[currentFilter] || 'Notes');
+    if (el) el.textContent = title || ({ all: 'All Notes', pinned: 'Pinned', favorites: 'Favorites', trash: 'Trash' }[currentFilter] || 'Notes');
   }
 
-  // ===== REFRESH ALL =====
-  async function refreshAll() {
-    await loadData();
-  }
+  async function refreshAll() { await loadData(); }
 
-  // ===== HELPERS =====
   function getPlainText(html) {
     const temp = document.createElement('div');
     temp.innerHTML = html;
@@ -506,7 +420,6 @@ const NoteApp = (() => {
     const min = Math.floor(diff / 60000);
     const hrs = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-
     if (min < 1) return 'Just now';
     if (min < 60) return `${min}m ago`;
     if (hrs < 24) return `${hrs}h ago`;
@@ -517,5 +430,4 @@ const NoteApp = (() => {
   return { init, refreshNoteList, refreshFolders, refreshTags, refreshAll, updateNoteItem, updateCounts };
 })();
 
-// ===== START =====
 document.addEventListener('DOMContentLoaded', () => NoteApp.init());
