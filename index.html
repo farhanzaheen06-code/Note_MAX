@@ -13,7 +13,6 @@
 </head>
 <body class="dark-mode sidebar-hidden notelist-hidden pages-hidden">
 
-  <!-- SIDEBAR -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <span class="app-name">NoteMax</span>
@@ -44,7 +43,6 @@
     </div>
   </aside>
 
-  <!-- NOTE LIST -->
   <section class="note-list" id="noteList">
     <div class="note-list-header">
       <div class="note-list-title" id="noteListTitle">All Notes</div>
@@ -63,7 +61,6 @@
     <div class="notes-container" id="notesContainer"></div>
   </section>
 
-  <!-- PAGES SIDEBAR (Right side) -->
   <aside class="pages-sidebar" id="pagesSidebar">
     <div class="pages-header">
       <span class="pages-title">📖 Pages</span>
@@ -73,12 +70,11 @@
     <button class="add-page-fab" id="addPageFab">+ Add Page</button>
   </aside>
 
-  <!-- EDITOR -->
   <main class="editor-panel" id="editorPanel">
     <div class="empty-state" id="emptyState">
       <div class="empty-icon">✏️</div>
       <h2>Welcome to NoteMax</h2>
-      <p>Tap New Note to start drawing.</p>
+      <p>Tap New Note to start.</p>
       <div class="empty-actions">
         <button class="primary-btn" id="emptyNewBtn">+ New Note</button>
         <button class="secondary-btn" id="emptyBrowseBtn">📂 Browse</button>
@@ -86,112 +82,47 @@
     </div>
 
     <div class="editor-content hidden" id="editorContent">
-      <!-- FLOATING TOOLBAR -->
       <div class="floating-toolbar" id="floatingToolbar">
         <div class="toolbar-group">
-          <button class="tool-round" id="menuBtn" title="Menu">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-            </svg>
-          </button>
-          <button class="tool-round" id="notesBtn" title="Notes">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-              <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
-            </svg>
-          </button>
-          <button class="tool-round" id="pagesBtn" title="Pages">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 4h11a2 2 0 012 2v14"/>
-              <path d="M8 6h11a2 2 0 012 2v14H8"/>
-            </svg>
-          </button>
-          <button class="tool-round" id="undoBtn" title="Undo">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M3 7v6h6"/>
-              <path d="M3 13c0-4.97 4.03-9 9-9a9 9 0 019 9 9 9 0 01-9 9c-3.87 0-7.17-2.44-8.44-5.87"/>
-            </svg>
-          </button>
-          <button class="tool-round" id="redoBtn" title="Redo">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M21 7v6h-6"/>
-              <path d="M21 13c0-4.97-4.03-9-9-9a9 9 0 00-9 9 9 9 0 009 9c3.87 0 7.17-2.44 8.44-5.87"/>
-            </svg>
-          </button>
+          <button class="tool-round" id="menuBtn" title="Menu">☰</button>
+          <button class="tool-round" id="notesBtn" title="Notes">📄</button>
+          <button class="tool-round" id="pagesBtn" title="Pages">📖</button>
+          <button class="tool-round" id="undoBtn" title="Undo">↶</button>
+          <button class="tool-round" id="redoBtn" title="Redo">↷</button>
         </div>
 
-        <!-- Pen Tools -->
         <div class="toolbar-group pen-group">
-          <button class="pen-tool" data-tool="select" title="Select">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
-            </svg>
-          </button>
+          <button class="pen-tool" data-tool="select" title="Select">🎯</button>
           <button class="pen-tool pen-preset active" data-tool="pen" data-color="#ffffff" title="White">
-            <div class="pen-visual" style="background: #ffffff;"></div>
+            <div class="pen-visual" style="background:#ffffff"></div>
           </button>
           <button class="pen-tool pen-preset" data-tool="pen" data-color="#ff9500" title="Orange">
-            <div class="pen-visual" style="background: #ff9500;"></div>
+            <div class="pen-visual" style="background:#ff9500"></div>
           </button>
           <button class="pen-tool pen-preset" data-tool="pen" data-color="#34c759" title="Green">
-            <div class="pen-visual" style="background: #34c759;"></div>
+            <div class="pen-visual" style="background:#34c759"></div>
           </button>
           <button class="pen-tool pen-preset" data-tool="pen" data-color="#ff453a" title="Red">
-            <div class="pen-visual" style="background: #ff453a;"></div>
+            <div class="pen-visual" style="background:#ff453a"></div>
           </button>
           <button class="pen-tool pen-preset" data-tool="pen" data-color="#5ac8fa" title="Blue">
-            <div class="pen-visual" style="background: #5ac8fa;"></div>
+            <div class="pen-visual" style="background:#5ac8fa"></div>
           </button>
-          <button class="pen-tool" data-tool="highlighter" title="Highlighter">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffff00" stroke-width="2.5">
-              <path d="M9 11l6 6M4 14l6 6L20 10l-6-6L4 14z"/>
-            </svg>
-          </button>
-          <button class="pen-tool" data-tool="eraser" title="Eraser">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M20 20H9l-7-7a2 2 0 010-2.83l9-9a2 2 0 012.83 0l7 7a2 2 0 010 2.83L11 20"/>
-            </svg>
-          </button>
-          <button class="pen-tool" data-tool="lasso" title="Lasso">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 2">
-              <circle cx="12" cy="12" r="9"/>
-            </svg>
-          </button>
-          <button class="pen-tool" id="autoShapeBtn" title="Shape">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <circle cx="12" cy="12" r="5"/>
-            </svg>
-          </button>
+          <button class="pen-tool" data-tool="highlighter" title="Highlighter">🖍</button>
+          <button class="pen-tool" data-tool="eraser" title="Eraser">🧹</button>
+          <button class="pen-tool" id="autoShapeBtn" title="Shapes">◇</button>
         </div>
 
-        <!-- Quick Thickness Selector -->
         <div class="toolbar-group thickness-group">
-          <button class="thickness-btn" data-size="1" title="Extra Fine">
-            <span class="thickness-dot" style="width:3px;height:3px;"></span>
-          </button>
-          <button class="thickness-btn" data-size="3" title="Fine">
-            <span class="thickness-dot" style="width:5px;height:5px;"></span>
-          </button>
-          <button class="thickness-btn active" data-size="5" title="Medium">
-            <span class="thickness-dot" style="width:8px;height:8px;"></span>
-          </button>
-          <button class="thickness-btn" data-size="10" title="Thick">
-            <span class="thickness-dot" style="width:12px;height:12px;"></span>
-          </button>
-          <button class="thickness-btn" data-size="18" title="Extra Thick">
-            <span class="thickness-dot" style="width:16px;height:16px;"></span>
-          </button>
+          <button class="thickness-btn" data-size="1"><span class="thickness-dot" style="width:3px;height:3px"></span></button>
+          <button class="thickness-btn" data-size="3"><span class="thickness-dot" style="width:5px;height:5px"></span></button>
+          <button class="thickness-btn active" data-size="5"><span class="thickness-dot" style="width:8px;height:8px"></span></button>
+          <button class="thickness-btn" data-size="10"><span class="thickness-dot" style="width:12px;height:12px"></span></button>
+          <button class="thickness-btn" data-size="18"><span class="thickness-dot" style="width:16px;height:16px"></span></button>
         </div>
 
-        <!-- Actions -->
         <div class="toolbar-group">
-          <button class="tool-round" id="addPageBtn" title="Add Page">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/>
-              <line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-          </button>
+          <button class="tool-round" id="addPageBtn" title="Add Page">+</button>
           <button class="tool-round" id="pinBtn" title="Pin">📌</button>
           <button class="tool-round" id="favBtn" title="Favorite">❤️</button>
           <button class="tool-round" id="exportNoteBtn" title="Export">💾</button>
@@ -199,7 +130,6 @@
         </div>
       </div>
 
-      <!-- Title Header -->
       <div class="page-header">
         <input type="text" id="titleInput" class="title-input-inline" placeholder="Untitled" />
         <div class="page-nav">
@@ -209,65 +139,25 @@
         </div>
       </div>
 
-      <!-- Canvas -->
       <div class="canvas-wrap" id="canvasWrap">
         <canvas id="bgCanvas"></canvas>
         <canvas id="drawingCanvas"></canvas>
-        <!-- Gesture Indicator -->
-        <div class="gesture-hint" id="gestureHint"></div>
       </div>
 
-      <!-- Pen Settings -->
       <div class="pen-settings-panel hidden" id="penSettings">
-        <div class="settings-arrow"></div>
         <div class="settings-title">✏️ Pen Settings</div>
-        
         <div class="settings-row">
           <label>Color</label>
           <input type="color" id="penColorPicker" value="#ffffff" />
         </div>
-        
         <div class="settings-row">
-          <label>Size: <span id="penSizeValue">3</span>px</label>
-          <input type="range" id="penSizeSlider" min="1" max="30" value="3" />
+          <label>Size: <span id="penSizeValue">5</span>px</label>
+          <input type="range" id="penSizeSlider" min="1" max="30" value="5" />
         </div>
-        
-        <!-- NEW: Pen Style Selector -->
-        <div class="settings-row">
-          <label>Pen Style</label>
-          <div class="pen-style-grid" id="penStyleGrid">
-            <button class="pen-style-btn active" data-style="solid">
-              <div class="style-preview" style="background: currentColor;"></div>
-              <span>Solid</span>
-            </button>
-            <button class="pen-style-btn" data-style="dashed">
-              <div class="style-preview dashed"></div>
-              <span>Dashed</span>
-            </button>
-            <button class="pen-style-btn" data-style="dotted">
-              <div class="style-preview dotted"></div>
-              <span>Dotted</span>
-            </button>
-            <button class="pen-style-btn" data-style="double">
-              <div class="style-preview double"></div>
-              <span>Double</span>
-            </button>
-            <button class="pen-style-btn" data-style="curly">
-              <div class="style-preview curly">〰️</div>
-              <span>Wavy</span>
-            </button>
-            <button class="pen-style-btn" data-style="zigzag">
-              <div class="style-preview zigzag">⚡</div>
-              <span>Zigzag</span>
-            </button>
-          </div>
-        </div>
-        
         <div class="settings-row">
           <label>Opacity: <span id="opacityValue">100</span>%</label>
           <input type="range" id="penOpacity" min="10" max="100" step="5" value="100" />
         </div>
-        
         <div class="settings-row">
           <label>Background</label>
           <select id="canvasBgSelect">
@@ -279,17 +169,16 @@
             <option value="cream">Cream</option>
           </select>
         </div>
-        
         <div class="settings-row toggle">
           <label>
-            <input type="checkbox" id="scribbleEraseToggle" checked />
-            <span>⚡ Fast Scribble Erase</span>
+            <input type="checkbox" id="scribbleEraseToggle" />
+            <span>⚡ Scribble+Hold to Erase</span>
           </label>
         </div>
         <div class="settings-row toggle">
           <label>
             <input type="checkbox" id="shapeRecognitionToggle" />
-            <span>🔷 Shape Recognition</span>
+            <span>🔷 Auto Shape Recognition</span>
           </label>
         </div>
         <div class="settings-row toggle">
@@ -307,16 +196,14 @@
         <div class="settings-row toggle">
           <label>
             <input type="checkbox" id="gesturesToggle" checked />
-            <span>✌️ 2-Finger Gestures</span>
+            <span>✌️ Two-Finger Gestures</span>
           </label>
         </div>
-        
         <button class="close-panel-btn" id="closePenSettings">Done</button>
       </div>
     </div>
   </main>
 
-  <!-- MODALS -->
   <div class="modal-overlay hidden" id="folderModal">
     <div class="modal">
       <div class="modal-header"><h3>New Folder</h3><button class="icon-btn" id="closeFolderModal">✕</button></div>
@@ -346,9 +233,9 @@
     <div class="modal">
       <div class="modal-header"><h3>Export</h3><button class="icon-btn" id="closeExportModal">✕</button></div>
       <div class="modal-body export-options">
-        <button class="export-btn" id="exportImg"><span>🖼</span><div><strong>PNG</strong><small>Current page</small></div></button>
-        <button class="export-btn" id="exportPdf"><span>📋</span><div><strong>PDF</strong><small>Print/Save</small></div></button>
-        <button class="export-btn" id="exportAll"><span>📦</span><div><strong>Backup</strong><small>All notes</small></div></button>
+        <button class="export-btn" id="exportImg"><span>🖼</span><div><strong>PNG</strong></div></button>
+        <button class="export-btn" id="exportPdf"><span>📋</span><div><strong>PDF</strong></div></button>
+        <button class="export-btn" id="exportAll"><span>📦</span><div><strong>Backup</strong></div></button>
       </div>
     </div>
   </div>
@@ -366,15 +253,6 @@
               <option value="sepia">Sepia</option>
             </select>
           </label>
-          <label>Accent <input type="color" id="accentColorPicker" value="#ff9500" /></label>
-        </div>
-        <div class="settings-section">
-          <h4>Gestures</h4>
-          <p class="about-text">
-            <strong>✌️ Two-finger tap:</strong> Undo<br/>
-            <strong>✌️ Three-finger tap:</strong> Redo<br/>
-            <strong>👆 One finger:</strong> Draw (if enabled)
-          </p>
         </div>
         <div class="settings-section">
           <h4>Data</h4>
@@ -385,7 +263,7 @@
         </div>
         <div class="settings-section">
           <h4>About</h4>
-          <p class="about-text">NoteMax v5.0<br/>Multi-page notebooks + gestures</p>
+          <p class="about-text">NoteMax v6.0 - Buttery smooth writing</p>
         </div>
       </div>
     </div>
