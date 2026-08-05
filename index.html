@@ -13,7 +13,7 @@
 </head>
 <body class="dark-mode sidebar-hidden notelist-hidden">
 
-  <!-- ===================== SIDEBAR ===================== -->
+  <!-- SIDEBAR -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <span class="app-name">NoteMax</span>
@@ -49,7 +49,7 @@
     </div>
   </aside>
 
-  <!-- ===================== NOTE LIST ===================== -->
+  <!-- NOTE LIST -->
   <section class="note-list" id="noteList">
     <div class="note-list-header">
       <div class="note-list-title" id="noteListTitle">All Notes</div>
@@ -68,25 +68,25 @@
     <div class="notes-container" id="notesContainer"></div>
   </section>
 
-  <!-- ===================== EDITOR ===================== -->
+  <!-- EDITOR -->
   <main class="editor-panel" id="editorPanel">
 
     <div class="empty-state" id="emptyState">
-      <div class="empty-icon">📝</div>
+      <div class="empty-icon">✏️</div>
       <h2>Welcome to NoteMax</h2>
-      <p>Tap the menu to browse notes or create a new one.</p>
+      <p>Tap New Note to start drawing with your Apple Pencil.</p>
       <div class="empty-actions">
-        <button class="primary-btn" id="emptyNewBtn">+ Create New Note</button>
+        <button class="primary-btn" id="emptyNewBtn">+ New Note</button>
         <button class="secondary-btn" id="emptyBrowseBtn">📂 Browse Notes</button>
       </div>
     </div>
 
     <div class="editor-content hidden" id="editorContent">
 
-      <!-- FLOATING TOOLBAR - GOODNOTES STYLE -->
+      <!-- FLOATING TOOLBAR -->
       <div class="floating-toolbar" id="floatingToolbar">
         
-        <!-- Menu Toggle -->
+        <!-- Menu -->
         <div class="toolbar-group">
           <button class="tool-round" id="menuBtn" title="Menu">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -95,7 +95,7 @@
               <line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
-          <button class="tool-round" id="notesBtn" title="Notes List">
+          <button class="tool-round" id="notesBtn" title="Notes">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="7" height="7"/>
               <rect x="14" y="3" width="7" height="7"/>
@@ -117,29 +117,6 @@
           </button>
         </div>
 
-        <!-- Content Actions -->
-        <div class="toolbar-group">
-          <button class="tool-round" id="addPageBtn" title="Add Page">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/>
-              <line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-          </button>
-          <button class="tool-round" id="searchNoteBtn" title="Search">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <circle cx="11" cy="11" r="8"/>
-              <path d="M21 21l-4.35-4.35"/>
-            </svg>
-          </button>
-          <button class="tool-round" id="mediaBtn" title="Insert Image">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <circle cx="8.5" cy="8.5" r="1.5"/>
-              <polyline points="21 15 16 10 5 21"/>
-            </svg>
-          </button>
-        </div>
-
         <!-- Pen Tools -->
         <div class="toolbar-group pen-group">
           <button class="pen-tool" data-tool="select" title="Select">
@@ -147,17 +124,20 @@
               <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
             </svg>
           </button>
-          <button class="pen-tool pen-preset active" data-tool="pen" data-color="#ffffff" title="White Pen">
+          <button class="pen-tool pen-preset active" data-tool="pen" data-color="#ffffff" title="White">
             <div class="pen-visual" style="background: #ffffff;"></div>
           </button>
-          <button class="pen-tool pen-preset" data-tool="pen" data-color="#ff9500" title="Orange Pen">
+          <button class="pen-tool pen-preset" data-tool="pen" data-color="#ff9500" title="Orange">
             <div class="pen-visual" style="background: #ff9500;"></div>
           </button>
-          <button class="pen-tool pen-preset" data-tool="pen" data-color="#34c759" title="Green Pen">
+          <button class="pen-tool pen-preset" data-tool="pen" data-color="#34c759" title="Green">
             <div class="pen-visual" style="background: #34c759;"></div>
           </button>
-          <button class="pen-tool pen-preset" data-tool="pen" data-color="#ff453a" title="Red Pen">
+          <button class="pen-tool pen-preset" data-tool="pen" data-color="#ff453a" title="Red">
             <div class="pen-visual" style="background: #ff453a;"></div>
+          </button>
+          <button class="pen-tool pen-preset" data-tool="pen" data-color="#5ac8fa" title="Blue">
+            <div class="pen-visual" style="background: #5ac8fa;"></div>
           </button>
           <button class="pen-tool" data-tool="highlighter" title="Highlighter">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffff00" stroke-width="2.5">
@@ -176,13 +156,27 @@
           </button>
           <button class="pen-tool" id="autoShapeBtn" title="Shape Recognition">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="9"/>
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="12" cy="12" r="5"/>
             </svg>
           </button>
         </div>
 
-        <!-- Note Actions -->
+        <!-- Actions -->
         <div class="toolbar-group">
+          <button class="tool-round" id="addPageBtn" title="Add Page">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+          <button class="tool-round" id="mediaBtn" title="Insert Image">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </button>
           <button class="tool-round" id="pinBtn" title="Pin">📌</button>
           <button class="tool-round" id="favBtn" title="Favorite">❤️</button>
           <button class="tool-round" id="exportNoteBtn" title="Export">💾</button>
@@ -190,7 +184,7 @@
         </div>
       </div>
 
-      <!-- Page Header -->
+      <!-- Title -->
       <div class="page-header">
         <input type="text" id="titleInput" class="title-input-inline" placeholder="Untitled" />
         <div class="page-nav">
@@ -200,22 +194,13 @@
         </div>
       </div>
 
-      <!-- Tab Switcher -->
-      <div class="tab-switcher">
-        <button class="tab-mini active" data-tab="draw">✏️ Draw</button>
-        <button class="tab-mini" data-tab="text">📝 Text</button>
-        <button class="tab-mini" data-tab="checklist">✅ Checklist</button>
+      <!-- Canvas -->
+      <div class="canvas-wrap" id="canvasWrap">
+        <canvas id="bgCanvas"></canvas>
+        <canvas id="drawingCanvas"></canvas>
       </div>
 
-      <!-- DRAW PANEL -->
-      <div class="tab-panel active" id="drawPanel">
-        <div class="canvas-wrap" id="canvasWrap">
-          <canvas id="bgCanvas"></canvas>
-          <canvas id="drawingCanvas"></canvas>
-        </div>
-      </div>
-
-      <!-- PEN SETTINGS FLOATING PANEL -->
+      <!-- Pen Settings -->
       <div class="pen-settings-panel hidden" id="penSettings">
         <div class="settings-arrow"></div>
         <div class="settings-title">✏️ Pen Settings</div>
@@ -254,68 +239,18 @@
             <span>Shape Recognition</span>
           </label>
         </div>
+        <div class="settings-row toggle">
+          <label>
+            <input type="checkbox" id="fingerDrawToggle" />
+            <span>Draw with Finger</span>
+          </label>
+        </div>
         <button class="close-panel-btn" id="closePenSettings">Done</button>
-      </div>
-
-      <!-- TEXT PANEL -->
-      <div class="tab-panel hidden" id="textPanel">
-        <div class="format-bar" id="formatBar">
-          <button class="fmt-btn" data-cmd="bold"><b>B</b></button>
-          <button class="fmt-btn" data-cmd="italic"><i>I</i></button>
-          <button class="fmt-btn" data-cmd="underline"><u>U</u></button>
-          <div class="fmt-divider"></div>
-          <button class="fmt-btn" data-cmd="formatBlock" data-val="h1">H1</button>
-          <button class="fmt-btn" data-cmd="formatBlock" data-val="h2">H2</button>
-          <button class="fmt-btn" data-cmd="formatBlock" data-val="p">P</button>
-          <div class="fmt-divider"></div>
-          <button class="fmt-btn" data-cmd="insertUnorderedList">• List</button>
-          <button class="fmt-btn" data-cmd="insertOrderedList">1. List</button>
-          <div class="fmt-divider"></div>
-          <input type="color" id="textColorPicker" class="color-picker-btn" value="#ffffff" />
-          <button class="fmt-btn" id="insertLinkBtn">🔗</button>
-          <button class="fmt-btn" id="insertImageBtn">🖼</button>
-          <button class="fmt-btn" id="insertDividerBtn">—</button>
-        </div>
-        <div class="rich-editor" id="richEditor" contenteditable="true" data-placeholder="Start writing..."></div>
-      </div>
-
-      <!-- CHECKLIST PANEL -->
-      <div class="tab-panel hidden" id="checklistPanel">
-        <div class="checklist-header">
-          <div class="progress-wrap">
-            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-            <span class="progress-text" id="progressText">0 / 0</span>
-          </div>
-          <div class="checklist-actions">
-            <button class="sm-btn" id="checkAllBtn">Check All</button>
-            <button class="sm-btn" id="uncheckAllBtn">Uncheck All</button>
-            <button class="sm-btn danger" id="clearCheckedBtn">Clear Done</button>
-          </div>
-        </div>
-        <div class="checklist-items" id="checklistItems"></div>
-        <div class="add-checklist-item">
-          <input type="text" id="newCheckItem" placeholder="Add a new item..." />
-          <button class="primary-btn" id="addCheckItemBtn">Add</button>
-        </div>
       </div>
     </div>
   </main>
 
   <!-- MODALS -->
-  <div class="modal-overlay hidden" id="tagModal">
-    <div class="modal">
-      <div class="modal-header"><h3>Tags</h3><button class="icon-btn" id="closeTagModal">✕</button></div>
-      <div class="modal-body">
-        <div class="tag-selector" id="tagSelector"></div>
-        <div class="new-tag-row">
-          <input type="text" id="newTagInput" placeholder="New tag..." />
-          <input type="color" id="newTagColor" value="#6366f1" class="color-picker-btn" />
-          <button class="primary-btn" id="createTagBtn">Create</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <div class="modal-overlay hidden" id="folderModal">
     <div class="modal">
       <div class="modal-header"><h3>New Folder</h3><button class="icon-btn" id="closeFolderModal">✕</button></div>
@@ -328,15 +263,25 @@
     </div>
   </div>
 
+  <div class="modal-overlay hidden" id="tagModal">
+    <div class="modal">
+      <div class="modal-header"><h3>Tags</h3><button class="icon-btn" id="closeTagModal">✕</button></div>
+      <div class="modal-body">
+        <div class="new-tag-row">
+          <input type="text" id="newTagInput" placeholder="New tag..." />
+          <input type="color" id="newTagColor" value="#6366f1" class="color-picker-btn" />
+          <button class="primary-btn" id="createTagBtn">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay hidden" id="exportModal">
     <div class="modal">
-      <div class="modal-header"><h3>Export Note</h3><button class="icon-btn" id="closeExportModal">✕</button></div>
+      <div class="modal-header"><h3>Export</h3><button class="icon-btn" id="closeExportModal">✕</button></div>
       <div class="modal-body export-options">
-        <button class="export-btn" id="exportTxt"><span>📄</span><div><strong>Text</strong><small>.txt file</small></div></button>
-        <button class="export-btn" id="exportMd"><span>📝</span><div><strong>Markdown</strong><small>.md file</small></div></button>
-        <button class="export-btn" id="exportHtml"><span>🌐</span><div><strong>HTML</strong><small>Web page</small></div></button>
-        <button class="export-btn" id="exportPdf"><span>📋</span><div><strong>PDF</strong><small>Print</small></div></button>
-        <button class="export-btn" id="exportImg"><span>🖼</span><div><strong>PNG</strong><small>Canvas</small></div></button>
+        <button class="export-btn" id="exportImg"><span>🖼</span><div><strong>PNG</strong><small>Save as image</small></div></button>
+        <button class="export-btn" id="exportPdf"><span>📋</span><div><strong>PDF</strong><small>Print / Save</small></div></button>
         <button class="export-btn" id="exportAll"><span>📦</span><div><strong>Backup</strong><small>All notes</small></div></button>
       </div>
     </div>
@@ -356,7 +301,6 @@
             </select>
           </label>
           <label>Accent <input type="color" id="accentColorPicker" value="#ff9500" /></label>
-          <label>Font Size <input type="range" id="globalFontSize" min="12" max="24" value="16" /><span id="fontSizeDisplay">16px</span></label>
         </div>
         <div class="settings-section">
           <h4>Data</h4>
@@ -367,15 +311,13 @@
         </div>
         <div class="settings-section">
           <h4>About</h4>
-          <p class="about-text">NoteMax v3.0<br/>All data stays on your device.</p>
+          <p class="about-text">NoteMax v4.0<br/>Pure pen drawing app.<br/>All data local.</p>
         </div>
       </div>
     </div>
   </div>
 
   <div class="toast" id="toast"></div>
-
-  <!-- Backdrop for mobile sidebar -->
   <div class="backdrop hidden" id="backdrop"></div>
 
   <script src="db.js"></script>
